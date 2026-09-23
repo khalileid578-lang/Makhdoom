@@ -1,0 +1,17 @@
+{
+  "name": "church-app",
+  "version": "1.0.0",
+  "description": "نظام إدارة كنيسة العذراء مريم - خدمة الأنبا أثناسيوس الرسول - اجتماع إعدادي",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node db/init.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "better-sqlite3": "^11.3.0",
+    "bcryptjs": "^2.4.3",
+    "express-session": "^1.18.0",
+    "connect-sqlite3": "^0.9.15"
+  }
+}
