@@ -1,0 +1,85 @@
+* { box-sizing: border-box; }
+body {
+  font-family: 'Tahoma', 'Segoe UI', Arial, sans-serif;
+  direction: rtl;
+  margin: 0;
+  background: #f3f1e9;
+  color: #2c2418;
+}
+.topbar {
+  background: #6b2b2b;
+  color: #fff;
+  padding: 14px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.topbar h1 { font-size: 17px; margin: 0; }
+.topbar .sub { font-size: 12px; opacity: .85; }
+.btn {
+  background: #b08d57;
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.btn:hover { background: #96743f; }
+.btn.secondary { background: #6b2b2b; }
+.btn.danger { background: #a33; }
+.container { max-width: 960px; margin: 20px auto; padding: 0 14px; }
+.card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 18px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.1);
+}
+.tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.tab {
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #eee2c9;
+  cursor: pointer;
+  font-size: 14px;
+}
+.tab.active { background: #6b2b2b; color: #fff; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 8px; border-bottom: 1px solid #eee; text-align: right; }
+th { background: #f6efe0; }
+input, select {
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 14px;
+  width: 100%;
+}
+label { font-size: 13px; display: block; margin: 8px 0 4px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+.alert {
+  background: #fff3cd;
+  border: 1px solid #e0c060;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+.alert.ok { background: #e6f6e6; border-color: #7bc07b; }
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.badge.present { background: #d7f0d7; color: #1a5c1a; }
+.badge.absent { background: #f7d7d7; color: #8a1a1a; }
+.login-wrap {
+  display: flex; align-items: center; justify-content: center; min-height: 100vh;
+}
+.login-box { width: 320px; }
+.error-msg { color: #a33; font-size: 13px; margin-top: 6px; }
+.actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
