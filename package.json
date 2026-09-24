@@ -9,9 +9,8 @@
   },
   "dependencies": {
     "express": "^4.19.2",
-    "better-sqlite3": "^11.3.0",
+    "@libsql/client": "^0.18.0",
     "bcryptjs": "^2.4.3",
-    "express-session": "^1.18.0",
-    "connect-sqlite3": "^0.9.15"
+    "cookie-session": "^2.1.1"
   }
 }
