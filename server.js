@@ -61,6 +61,9 @@ async function all(sql, args = []) {
   return r.rows;
 }
 
+// المجموعات (الفصول) الثابتة
+const GROUPS = ['أولى إعدادي', 'تانية إعدادي', 'تالتة إعدادي'];
+
 // ---------- Auth ----------
 app.post('/api/login', ah(async (req, res) => {
   const { username, password } = req.body || {};
@@ -70,7 +73,7 @@ app.post('/api/login', ah(async (req, res) => {
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });
   }
-  req.session.user = { id: user.id, username: user.username, name: user.name, role: user.role };
+  req.session.user = { id: user.id, username: user.username, name: user.name, role: user.role, group_name: user.group_name || null };
   res.json({ user: req.session.user });
 }));
 
@@ -81,88 +84,122 @@ app.post('/api/logout', (req, res) => {
 
 app.get('/api/me', requireAuth, (req, res) => res.json({ user: req.session.user }));
 
-// ---------- Users management (admin only) ----------
-app.get('/api/users', requireAuth, requireRole('admin'), ah(async (req, res) => {
-  const rows = await all('SELECT id, username, name, role, active FROM users ORDER BY id');
+// ---------- Users management (admin: كل حاجة | أمين خدمة: حسابات الخدام فقط) ----------
+app.get('/api/users', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
+  const myRole = req.session.user.role;
+  const rows = myRole === 'admin'? await all('SELECT id, username, name, role, group_name, active FROM users ORDER BY id')
+    : await all("SELECT id, username, name, role, group_name, active FROM users WHERE role = 'khadem' ORDER BY id");
   res.json(rows);
 }));
 
-app.post('/api/users', requireAuth, requireRole('admin'), ah(async (req, res) => {
-  const { username, password, name, role } = req.body || {};
+app.post('/api/users', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
+  const { username, password, name, role, group_name } = req.body || {};
+  const myRole = req.session.user.role;
+  if (myRole === 'amin_khedma' && role !== 'khadem') {
+    return res.status(403).json({ error: 'أمين الخدمة يقدر يضيف حسابات خدام فقط' });
+  }
   if (!username || !password || !name || !['admin', 'amin_khedma', 'khadem'].includes(role)) {
     return res.status(400).json({ error: 'بيانات ناقصة أو صلاحية غير معروفة' });
+  }
+  if (role === 'khadem' && !GROUPS.includes(group_name)) {
+    return res.status(400).json({ error: 'اختر مجموعة (فصل) صحيحة للخادم' });
   }
   const exists = await get('SELECT id FROM users WHERE username = ?', [username]);
   if (exists) return res.status(400).json({ error: 'اسم المستخدم مستخدم بالفعل' });
 
   const hash = bcrypt.hashSync(password, 10);
-  const info = await run('INSERT INTO users (username, password_hash, name, role) VALUES (?,?,?,?)',
-    [username, hash, name, role]);const newUser = await get('SELECT id, username, name, role, active FROM users WHERE id = ?', [Number(info.lastInsertRowid)]);
+  const info = await run('INSERT INTO users (username, password_hash, name, role, group_name) VALUES (?,?,?,?,?)',
+    [username, hash, name, role, role === 'khadem' ? group_name : null]);
+  const newUser = await get('SELECT id, username, name, role, group_name, active FROM users WHERE id = ?', [Number(info.lastInsertRowid)]);
   res.json(newUser);
 }));
 
-app.put('/api/users/:id', requireAuth, requireRole('admin'), ah(async (req, res) => {
-  const { name, role, active, password } = req.body || {};
+app.put('/api/users/:id', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
   const id = +req.params.id;
+  const myRole = req.session.user.role;
   const existing = await get('SELECT * FROM users WHERE id = ?', [id]);
   if (!existing) return res.status(404).json({ error: 'غير موجود' });
-
-  await run('UPDATE users SET name = COALESCE(?,name), role = COALESCE(?,role), active = COALESCE(?,active) WHERE id = ?',
-    [name ?? null, role ?? null, active === undefined ? null : (active ? 1 : 0), id]);
+  if (myRole === 'amin_khedma' && existing.role !== 'khadem') {
+    return res.status(403).json({ error: 'غير مسموح' });
+  }
+  const { name, role, group_name, active, password } = req.body || {};
+  if (myRole === 'amin_khedma' && role && role !== 'khadem') {
+    return res.status(403).json({ error: 'غير مسموح' });
+  }
+  await run('UPDATE users SET name = COALESCE(?,name), role = COALESCE(?,role), group_name = COALESCE(?,group_name), active = COALESCE(?,active) WHERE id = ?',
+    [name ?? null, role ?? null, group_name ?? null, active === undefined ? null : (active ? 1 : 0), id]);
   if (password) {
     await run('UPDATE users SET password_hash = ? WHERE id = ?', [bcrypt.hashSync(password, 10), id]);
   }
-  const updated = await get('SELECT id, username, name, role, active FROM users WHERE id = ?', [id]);
+  const updated = await get('SELECT id, username, name, role, group_name, active FROM users WHERE id = ?', [id]);
   res.json(updated);
 }));
 
-app.delete('/api/users/:id', requireAuth, requireRole('admin'), ah(async (req, res) => {
-  await run('DELETE FROM users WHERE id = ?', [+req.params.id]);
+app.delete('/api/users/:id', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
+  const id = +req.params.id;
+  if (req.session.user.role === 'amin_khedma') {
+    const existing = await get('SELECT role FROM users WHERE id = ?', [id]);
+    if (!existing || existing.role !== 'khadem') return res.status(403).json({ error: 'غير مسموح' });
+  }
+  await run('DELETE FROM users WHERE id = ?', [id]);
   res.json({ ok: true });
 }));
 
-app.get('/api/khadem-list', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
-  const rows = await all("SELECT id, name, username FROM users WHERE role = 'khadem' AND active = 1");
-  res.json(rows);
-}));
+app.get('/api/groups', requireAuth, (req, res) => res.json(GROUPS));
 
 // ---------- Members (المخدومين) ----------
+// أدمن وأمين خدمة: كل المخدومين. خادم: مخدومين مجموعته بس (لكن بتحكم كامل فيهم)
 app.get('/api/members', requireAuth, ah(async (req, res) => {
-  const { role, id } = req.session.user;
+  const { role, group_name } = req.session.user;
   let rows;
   if (role === 'khadem') {
-    rows = await all('SELECT * FROM members WHERE assigned_khadem_id = ? AND active = 1 ORDER BY name', [id]);
+    rows = await all('SELECT * FROM members WHERE group_name = ? AND active = 1 ORDER BY name', [group_name]);
   } else {
     rows = await all('SELECT * FROM members WHERE active = 1 ORDER BY name');
   }
   res.json(rows);
 }));
 
-app.post('/api/members', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
-  const { name, age, phone, birth_date, group_name, assigned_khadem_id } = req.body || {};
+app.post('/api/members', requireAuth, requireRole('admin', 'amin_khedma', 'khadem'), ah(async (req, res) => {
+  const { role, group_name: myGroup } = req.session.user;
+  let { name, age, phone, birth_date, group_name, address } = req.body || {};
   if (!name) return res.status(400).json({ error: 'اسم المخدوم مطلوب' });
-  const info = await run(`INSERT INTO members (name, age, phone, birth_date, group_name, assigned_khadem_id)
-    VALUES (?,?,?,?,?,?)`, [name, age || null, phone || null, birth_date || null, group_name || null, assigned_khadem_id || null]);
+  if (role === 'khadem') group_name = myGroup; // الخادم يقدر يضيف بس في مجموعته
+  else if (group_name && !GROUPS.includes(group_name)) return res.status(400).json({ error: 'مجموعة غير صحيحة' });
+
+  const info = await run(`INSERT INTO members (name, age, phone, birth_date, group_name, address)
+    VALUES (?,?,?,?,?,?)`, [name, age || null, phone || null, birth_date || null, group_name || null, address || null]);
   const created = await get('SELECT * FROM members WHERE id = ?', [Number(info.lastInsertRowid)]);
   res.json(created);
 }));
 
-app.put('/api/members/:id', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
-  const { name, age, phone, birth_date, group_name, assigned_khadem_id, active } = req.body || {};
+app.put('/api/members/:id', requireAuth, requireRole('admin', 'amin_khedma', 'khadem'), ah(async (req, res) => {
   const id = +req.params.id;
+  const { role, group_name: myGroup } = req.session.user;
+  const existing = await get('SELECT * FROM members WHERE id = ?', [id]);if (!existing) return res.status(404).json({ error: 'غير موجود' });
+  if (role === 'khadem' && existing.group_name !== myGroup) {
+    return res.status(403).json({ error: 'هذا المخدوم مش في مجموعتك' });
+  }
+  const { name, age, phone, birth_date, group_name, address, active } = req.body || {};
+  const newGroup = role === 'khadem' ? myGroup : (group_name ?? existing.group_name); // الخادم متسمحش ينقل المخدوم لمجموعة تانية
   await run(`UPDATE members SET
       name = COALESCE(?,name), age = COALESCE(?,age), phone = COALESCE(?,phone),
-      birth_date = COALESCE(?,birth_date), group_name = COALESCE(?,group_name),
-      assigned_khadem_id = COALESCE(?,assigned_khadem_id), active = COALESCE(?,active)
+      birth_date = COALESCE(?,birth_date), group_name = ?, address = COALESCE(?,address), active = COALESCE(?,active)
     WHERE id = ?`,
-    [name ?? null, age ?? null, phone ?? null, birth_date ?? null, group_name ?? null,
-      assigned_khadem_id ?? null, active === undefined ? null : (active ? 1 : 0), id]);
+    [name ?? null, age ?? null, phone ?? null, birth_date ?? null, newGroup, address ?? null,
+      active === undefined ? null : (active ? 1 : 0), id]);
   const updated = await get('SELECT * FROM members WHERE id = ?', [id]);
   res.json(updated);
 }));
 
-app.delete('/api/members/:id', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
-  await run('DELETE FROM members WHERE id = ?', [+req.params.id]);
+app.delete('/api/members/:id', requireAuth, requireRole('admin', 'amin_khedma', 'khadem'), ah(async (req, res) => {
+  const id = +req.params.id;
+  const { role, group_name: myGroup } = req.session.user;
+  if (role === 'khadem') {
+    const existing = await get('SELECT group_name FROM members WHERE id = ?', [id]);
+    if (!existing || existing.group_name !== myGroup) return res.status(403).json({ error: 'هذا المخدوم مش في مجموعتك' });
+  }
+  await run('DELETE FROM members WHERE id = ?', [id]);
   res.json({ ok: true });
 }));
 
@@ -170,13 +207,13 @@ app.delete('/api/members/:id', requireAuth, requireRole('admin', 'amin_khedma'),
 app.get('/api/attendance', requireAuth, ah(async (req, res) => {
   const { date } = req.query;
   if (!date) return res.status(400).json({ error: 'حدد التاريخ' });
-  const { role, id } = req.session.user;
+  const { role, group_name } = req.session.user;
   let rows;
   if (role === 'khadem') {
     rows = await all(`
       SELECT m.id member_id, m.name, a.present
       FROM members m LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
-      WHERE m.assigned_khadem_id = ? AND m.active = 1 ORDER BY m.name`, [date, id]);
+      WHERE m.group_name = ? AND m.active = 1 ORDER BY m.name`, [date, group_name]);
   } else {
     rows = await all(`
       SELECT m.id member_id, m.name, a.present
@@ -191,12 +228,13 @@ app.post('/api/attendance', requireAuth, ah(async (req, res) => {
   if (!member_id || !date || present === undefined) return res.status(400).json({ error: 'بيانات ناقصة' });
 
   if (req.session.user.role === 'khadem') {
-    const m = await get('SELECT assigned_khadem_id FROM members WHERE id = ?', [member_id]);
-    if (!m || m.assigned_khadem_id !== req.session.user.id) {
-      return res.status(403).json({ error: 'هذا المخدوم غير مسند إليك' });
+    const m = await get('SELECT group_name FROM members WHERE id = ?', [member_id]);
+    if (!m || m.group_name !== req.session.user.group_name) {
+      return res.status(403).json({ error: 'هذا المخدوم مش في مجموعتك' });
     }
   }
-  await run(`INSERT INTO attendance (member_id, date, present, recorded_by) VALUES (?,?,?,?)ON CONFLICT(member_id, date) DO UPDATE SET present = excluded.present, recorded_by = excluded.recorded_by`,
+  await run(`INSERT INTO attendance (member_id, date, present, recorded_by) VALUES (?,?,?,?)
+    ON CONFLICT(member_id, date) DO UPDATE SET present = excluded.present, recorded_by = excluded.recorded_by`,
     [member_id, date, present ? 1 : 0, req.session.user.id]);
   res.json({ ok: true });
 }));
@@ -227,12 +265,11 @@ app.get('/api/alerts/latest', requireAuth, ah(async (req, res) => {
   const lastDate = lastDateRow && lastDateRow.d;
   if (!lastDate) return res.json({ date: null, absentMembers: [], absentServants: [] });
 
-  const { role, id } = req.session.user;
-  let absentMembers;
+  const { role, group_name } = req.session.user;let absentMembers;
   if (role === 'khadem') {
     absentMembers = await all(`
       SELECT m.name FROM attendance a JOIN members m ON m.id = a.member_id
-      WHERE a.date = ? AND a.present = 0 AND m.assigned_khadem_id = ?`, [lastDate, id]);
+      WHERE a.date = ? AND a.present = 0 AND m.group_name = ?`, [lastDate, group_name]);
   } else {
     absentMembers = await all(`
       SELECT m.name FROM attendance a JOIN members m ON m.id = a.member_id
@@ -252,15 +289,24 @@ app.get('/api/alerts/latest', requireAuth, ah(async (req, res) => {
 }));
 
 // ---------- Reports ----------
-app.get('/api/reports/attendance', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
+// أدمن وأمين خدمة: أي فصل (أو الكل). خادم: فصله بس تلقائيًا
+app.get('/api/reports/attendance', requireAuth, ah(async (req, res) => {
   const { from, to } = req.query;
-  const rows = await all(`
-    SELECT date,
-      SUM(present) as present_count,
-      SUM(1 - present) as absent_count
-    FROM attendance
-    WHERE date BETWEEN COALESCE(?, '0000-01-01') AND COALESCE(?, '9999-12-31')
-    GROUP BY date ORDER BY date`, [from || null, to || null]);
+  const { role, group_name } = req.session.user;
+  let group = req.query.group_name || null;
+  if (role === 'khadem') group = group_name; // الخادم يشوف فصله بس مهما بعت
+
+  let sql = `
+    SELECT a.date,
+      SUM(a.present) as present_count,
+      SUM(1 - a.present) as absent_count
+    FROM attendance a JOIN members m ON m.id = a.member_id
+    WHERE a.date BETWEEN COALESCE(?, '0000-01-01') AND COALESCE(?, '9999-12-31')`;
+  const args = [from || null, to || null];
+  if (group) { sql += ' AND m.group_name = ?'; args.push(group); }
+  sql += ' GROUP BY a.date ORDER BY a.date';
+
+  const rows = await all(sql, args);
   res.json(rows);
 }));
 
