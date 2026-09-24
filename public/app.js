@@ -1,5 +1,5 @@
 let ME = null;
-let KHADEM_LIST = [];
+const GROUPS = ['أولى إعدادي', 'تانية إعدادي', 'تالتة إعدادي'];
 const today = () => new Date().toISOString().slice(0, 10);
 
 const ROLE_LABEL = { admin: 'أدمن', amin_khedma: 'أمين خدمة', khadem: 'خادم' };
@@ -22,11 +22,7 @@ async function init() {
     location.href = '/index.html';
     return;
   }
-  document.getElementById('whoami').textContent = `${ME.name} — ${ROLE_LABEL[ME.role]}`;
-
-  if (ME.role === 'admin' || ME.role === 'amin_khedma') {
-    try { KHADEM_LIST = await api('/api/khadem-list'); } catch (e) { KHADEM_LIST = []; }
-  }
+  document.getElementById('whoami').textContent = `${ME.name} — ${ROLE_LABEL[ME.role]}` + (ME.group_name ? ` (${ME.group_name})` : '');
 
   buildTabs();
   loadAlerts();
@@ -41,9 +37,9 @@ function buildTabs() {
   const tabs = [{ id: 'members', label: '👦 المخدومين' }, { id: 'attendance', label: '✅ الحضور' }];
   if (ME.role === 'admin' || ME.role === 'amin_khedma') {
     tabs.push({ id: 'servants', label: '👨‍🏫 حضور الخدام' });
-    tabs.push({ id: 'reports', label: '📊 التقارير' });
   }
-  if (ME.role === 'admin') tabs.push({ id: 'users', label: '👨‍💼 المستخدمين' });
+  tabs.push({ id: 'reports', label: '📊 التقارير' });
+  if (ME.role === 'admin' || ME.role === 'amin_khedma') tabs.push({ id: 'users', label: '👨‍💼 المستخدمين' });
 
   const box = document.getElementById('tabs');
   box.innerHTML = '';
@@ -87,12 +83,11 @@ async function renderMembers() {
   const content = document.getElementById('content');
   content.innerHTML = '<div class="card">جارِ التحميل...</div>';
   const members = await api('/api/members');
-  const canEdit = ME.role === 'admin' || ME.role === 'amin_khedma';
+  const isKhadem = ME.role === 'khadem';
 
-  const khademOptions = KHADEM_LIST.map(k => `<option value="${k.id}">${k.name}</option>`).join('');
-
-  content.innerHTML = `
-    ${canEdit ? `
+  const groupField = isKhadem
+    ? `<input value="${ME.group_name || ''}" disabled>`
+    : `<select id="m_group"><option value="">بدون</option>${GROUPS.map(g => `<option value="${g}">${g}</option>`).join('')}</select>`;content.innerHTML = `
     <div class="card">
       <h3>إضافة مخدوم جديد</h3>
       <div class="grid">
@@ -100,21 +95,20 @@ async function renderMembers() {
         <div><label>السن</label><input id="m_age" type="number"></div>
         <div><label>رقم الهاتف</label><input id="m_phone"></div>
         <div><label>تاريخ الميلاد</label><input id="m_birth" type="date"></div>
-        <div><label>المجموعة</label><input id="m_group"></div>
-        <div><label>الخادم المسؤول</label>
-          <select id="m_khadem"><option value="">بدون</option>${khademOptions}</select>
-        </div>
+        <div><label>العنوان</label><input id="m_address"></div>
+        <div><label>المجموعة</label>${groupField}</div>
       </div>
       <div class="actions"><button class="btn" onclick="addMember()">إضافة</button></div>
-    </div>` : ''}
-    <div class="card"><h3>قائمة المخدومين (${members.length})</h3>
+    </div>
+    <div class="card">
+      <h3>قائمة المخدومين (${members.length})</h3>
       <table>
-        <tr><th>الاسم</th><th>السن</th><th>الهاتف</th><th>الميلاد</th><th>المجموعة</th>${canEdit ? '<th></th>' : ''}</tr>
+        <tr><th>الاسم</th><th>السن</th><th>الهاتف</th><th>الميلاد</th><th>العنوان</th><th>المجموعة</th><th></th></tr>
         ${members.map(m => `
           <tr>
             <td>${m.name}</td><td>${m.age ?? '-'}</td><td>${m.phone ?? '-'}</td>
-            <td>${m.birth_date ?? '-'}</td><td>${m.group_name ?? '-'}</td>
-            ${canEdit ? `<td><button class="btn danger" onclick="deleteMember(${m.id})">حذف</button></td>` : ''}
+            <td>${m.birth_date ?? '-'}</td><td>${m.address ?? '-'}</td><td>${m.group_name ?? '-'}</td>
+            <td><button class="btn danger" onclick="deleteMember(${m.id})">حذف</button></td>
           </tr>`).join('')}
       </table>
     </div>`;
@@ -126,8 +120,8 @@ async function addMember() {
     age: +document.getElementById('m_age').value || null,
     phone: document.getElementById('m_phone').value.trim(),
     birth_date: document.getElementById('m_birth').value || null,
-    group_name: document.getElementById('m_group').value.trim(),
-    assigned_khadem_id: +document.getElementById('m_khadem').value || null
+    address: document.getElementById('m_address').value.trim(),
+    group_name: ME.role === 'khadem' ? ME.group_name : (document.getElementById('m_group').value || null)
   };
   if (!body.name) { alert('اكتب اسم المخدوم'); return; }
   await api('/api/members', { method: 'POST', body: JSON.stringify(body) });
@@ -191,8 +185,7 @@ async function renderServants(date) {
           <tr>
             <td>${r.name}</td>
             <td>${r.present === null ? '-' : `<span class="badge ${r.present ? 'present' : 'absent'}">${r.present ? 'حاضر' : 'غائب'}</span>`}</td>
-            <td>
-              <button class="btn" onclick="markServant(${r.khadem_id}, '${date}', 1)">حاضر</button>
+            <td><button class="btn" onclick="markServant(${r.khadem_id}, '${date}', 1)">حاضر</button>
               <button class="btn danger" onclick="markServant(${r.khadem_id}, '${date}', 0)">غائب</button>
             </td>
           </tr>`).join('') || '<tr><td colspan="3">لا يوجد خدام</td></tr>'}
@@ -210,15 +203,28 @@ async function markServant(khadem_id, date, present) {
 async function renderReports() {
   const content = document.getElementById('content');
   const month = String(new Date().getMonth() + 1).padStart(2, '0');
+  const canSeeAllGroups = ME.role === 'admin' || ME.role === 'amin_khedma';
+
+  const groupFilter = canSeeAllGroups
+    ? `<label>الفصل</label>
+       <select id="rep_group" onchange="loadAttendanceReport()">
+         <option value="">كل الفصول</option>
+         ${GROUPS.map(g => `<option value="${g}">${g}</option>`).join('')}
+       </select>`
+    : `<div class="sub">فصلك: ${ME.group_name || '-'}</div>`;
+
   content.innerHTML = `
     <div class="card">
       <h3>📊 تقرير الحضور والغياب</h3>
-      <div class="grid">
+      ${groupFilter}
+      <div class="grid" style="margin-top:10px;">
         <div><label>من تاريخ</label><input type="date" id="rep_from"></div>
         <div><label>إلى تاريخ</label><input type="date" id="rep_to"></div>
-      </div><div class="actions"><button class="btn" onclick="loadAttendanceReport()">عرض</button></div>
+      </div>
+      <div class="actions"><button class="btn" onclick="loadAttendanceReport()">عرض</button></div>
       <div id="rep_att_table" style="margin-top:12px;"></div>
     </div>
+    ${canSeeAllGroups ? `
     <div class="card">
       <h3>🎂 أعياد الميلاد</h3>
       <label>الشهر</label>
@@ -226,17 +232,19 @@ async function renderReports() {
         ${Array.from({length:12}, (_,i)=>{const v=String(i+1).padStart(2,'0'); return `<option value="${v}" ${v===month?'selected':''}>${v}</option>`}).join('')}
       </select>
       <div id="rep_bday_table" style="margin-top:12px;"></div>
-    </div>`;
+    </div>` : ''}`;
   loadAttendanceReport();
-  loadBirthdays();
+  if (canSeeAllGroups) loadBirthdays();
 }
 
 async function loadAttendanceReport() {
   const from = document.getElementById('rep_from').value;
   const to = document.getElementById('rep_to').value;
+  const group = ME.role === 'khadem' ? '' : (document.getElementById('rep_group')?.value || '');
   const q = new URLSearchParams();
   if (from) q.set('from', from);
   if (to) q.set('to', to);
+  if (group) q.set('group_name', group);
   const rows = await api('/api/reports/attendance?' + q.toString());
   document.getElementById('rep_att_table').innerHTML = `
     <table>
@@ -255,24 +263,28 @@ async function loadBirthdays() {
     </table>`;
 }
 
-// ---------------- المستخدمين (أدمن فقط) ----------------
+// ---------------- المستخدمين (أدمن + أمين خدمة) ----------------
 async function renderUsers() {
   const content = document.getElementById('content');
   content.innerHTML = '<div class="card">جارِ التحميل...</div>';
   const users = await api('/api/users');
-  content.innerHTML = `
-    <div class="card">
+  const isAdmin = ME.role === 'admin';
+
+  const roleOptions = isAdmin
+    ? `<option value="khadem">خادم</option><option value="amin_khedma">أمين خدمة</option><option value="admin">أدمن</option>`
+    : `<option value="khadem">خادم</option>`;
+
+  content.innerHTML = `<div class="card">
       <h3>إضافة مستخدم جديد</h3>
       <div class="grid">
         <div><label>الاسم</label><input id="u_name"></div>
         <div><label>اسم المستخدم</label><input id="u_username"></div>
         <div><label>كلمة المرور</label><input id="u_password" type="password"></div>
         <div><label>الصلاحية</label>
-          <select id="u_role">
-            <option value="khadem">خادم</option>
-            <option value="amin_khedma">أمين خدمة</option>
-            <option value="admin">أدمن</option>
-          </select>
+          <select id="u_role" onchange="toggleGroupField()">${roleOptions}</select>
+        </div>
+        <div id="u_group_wrap"><label>المجموعة (للخادم فقط)</label>
+          <select id="u_group"><option value="">اختر المجموعة</option>${GROUPS.map(g => `<option value="${g}">${g}</option>`).join('')}</select>
         </div>
       </div>
       <div class="actions"><button class="btn" onclick="addUser()">إضافة</button></div>
@@ -280,10 +292,10 @@ async function renderUsers() {
     <div class="card">
       <h3>المستخدمون</h3>
       <table>
-        <tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th>مفعّل</th><th></th></tr>
+        <tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th>المجموعة</th><th>مفعّل</th><th></th></tr>
         ${users.map(u => `
           <tr>
-            <td>${u.name}</td><td>${u.username}</td><td>${ROLE_LABEL[u.role]}</td>
+            <td>${u.name}</td><td>${u.username}</td><td>${ROLE_LABEL[u.role]}</td><td>${u.group_name ?? '-'}</td>
             <td>${u.active ? 'نعم' : 'لا'}</td>
             <td>
               <button class="btn" onclick="toggleUser(${u.id}, ${u.active ? 0 : 1})">${u.active ? 'تعطيل' : 'تفعيل'}</button>
@@ -294,14 +306,22 @@ async function renderUsers() {
     </div>`;
 }
 
+function toggleGroupField() {
+  const role = document.getElementById('u_role').value;
+  document.getElementById('u_group_wrap').style.display = role === 'khadem' ? 'block' : 'none';
+}
+
 async function addUser() {
+  const role = document.getElementById('u_role').value;
   const body = {
     name: document.getElementById('u_name').value.trim(),
     username: document.getElementById('u_username').value.trim(),
     password: document.getElementById('u_password').value,
-    role: document.getElementById('u_role').value
+    role,
+    group_name: role === 'khadem' ? document.getElementById('u_group').value : null
   };
   if (!body.name || !body.username || !body.password) { alert('أكمل كل الحقول'); return; }
+  if (role === 'khadem' && !body.group_name) { alert('اختر مجموعة (فصل) للخادم'); return; }
   try {
     await api('/api/users', { method: 'POST', body: JSON.stringify(body) });
     renderUsers();
