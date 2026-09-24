@@ -63,6 +63,16 @@ async function ensureSchema() {
       args: ['admin', hash, 'المدير العام', 'admin']
     });
   }
+
+  // ترقيات آمنة على جداول موجودة بالفعل (بتتجاهل الخطأ لو العمود موجود أصلاً)
+  const migrations = [
+    "ALTER TABLE users ADD COLUMN group_name TEXT",
+    "ALTER TABLE members ADD COLUMN address TEXT"
+  ];
+  for (const sql of migrations) {
+    try { await client.execute(sql); } catch (e) { /* العمود موجود بالفعل، تجاهل */ }
+  }
+
   return count;
 }
 
