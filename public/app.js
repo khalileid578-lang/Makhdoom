@@ -87,7 +87,9 @@ async function renderMembers() {
 
   const groupField = isKhadem
     ? `<input value="${ME.group_name || ''}" disabled>`
-    : `<select id="m_group"><option value="">بدون</option>${GROUPS.map(g => `<option value="${g}">${g}</option>`).join('')}</select>`;content.innerHTML = `
+    : `<select id="m_group"><option value="">بدون</option>${GROUPS.map(g => `<option value="${g}">${g}</option>`).join('')}</select>`;
+
+  content.innerHTML = `
     <div class="card">
       <h3>إضافة مخدوم جديد</h3>
       <div class="grid">
@@ -96,6 +98,8 @@ async function renderMembers() {
         <div><label>رقم الهاتف</label><input id="m_phone"></div>
         <div><label>تاريخ الميلاد</label><input id="m_birth" type="date"></div>
         <div><label>العنوان</label><input id="m_address"></div>
+        <div><label>موبايل ولي الأمر</label><input id="m_guardian_phone"></div>
+        <div><label>رابط فيسبوك</label><input id="m_facebook"></div>
         <div><label>المجموعة</label>${groupField}</div>
       </div>
       <div class="actions"><button class="btn" onclick="addMember()">إضافة</button></div>
@@ -103,12 +107,17 @@ async function renderMembers() {
     <div class="card">
       <h3>قائمة المخدومين (${members.length})</h3>
       <table>
-        <tr><th>الاسم</th><th>السن</th><th>الهاتف</th><th>الميلاد</th><th>العنوان</th><th>المجموعة</th><th></th></tr>
+        <tr><th>الاسم</th><th>السن</th><th>الهاتف</th><th>موبايل ولي الأمر</th><th>فيسبوك</th><th>المجموعة</th><th></th></tr>
         ${members.map(m => `
           <tr>
             <td>${m.name}</td><td>${m.age ?? '-'}</td><td>${m.phone ?? '-'}</td>
-            <td>${m.birth_date ?? '-'}</td><td>${m.address ?? '-'}</td><td>${m.group_name ?? '-'}</td>
-            <td><button class="btn danger" onclick="deleteMember(${m.id})">حذف</button></td>
+            <td>${m.guardian_phone ?? '-'}</td>
+            <td>${m.facebook_link ? `<a href="${m.facebook_link}" target="_blank">رابط</a>` : '-'}</td>
+            <td>${m.group_name ?? '-'}</td>
+            <td>
+              <button class="btn" onclick='editMember(${JSON.stringify(m)})'>تعديل</button>
+              <button class="btn danger" onclick="deleteMember(${m.id})">حذف</button>
+            </td>
           </tr>`).join('')}
       </table>
     </div>`;
@@ -121,10 +130,28 @@ async function addMember() {
     phone: document.getElementById('m_phone').value.trim(),
     birth_date: document.getElementById('m_birth').value || null,
     address: document.getElementById('m_address').value.trim(),
+    guardian_phone: document.getElementById('m_guardian_phone').value.trim(),
+    facebook_link: document.getElementById('m_facebook').value.trim(),
     group_name: ME.role === 'khadem' ? ME.group_name : (document.getElementById('m_group').value || null)
   };
   if (!body.name) { alert('اكتب اسم المخدوم'); return; }
   await api('/api/members', { method: 'POST', body: JSON.stringify(body) });
+  renderMembers();
+}
+
+function editMember(m) {
+  const name = prompt('الاسم:', m.name);
+  if (name === null) return;
+  const age = prompt('السن:', m.age ?? '');
+  const phone = prompt('رقم الهاتف:', m.phone ?? '');
+  const address = prompt('العنوان:', m.address ?? '');
+  const guardian_phone = prompt('موبايل ولي الأمر:', m.guardian_phone ?? '');
+  const facebook_link = prompt('رابط فيسبوك:', m.facebook_link ?? '');
+  updateMember(m.id, { name, age: +age || null, phone, address, guardian_phone, facebook_link });
+}
+
+async function updateMember(id, body) {
+  await api('/api/members/' + id, { method: 'PUT', body: JSON.stringify(body) });
   renderMembers();
 }
 
@@ -151,20 +178,25 @@ async function renderAttendance(date) {
         ${rows.map(r => `
           <tr>
             <td>${r.name}</td>
-            <td>${r.present === null ? '-' : `<span class="badge ${r.present ? 'present' : 'absent'}">${r.present ? 'حاضر' : 'غائب'}</span>`}</td>
+            <td>${r.present === null ? '-' : `<span class="badge ${r.present ? 'present' : 'absent'}">${r.present ? 'حاضر' : 'غائب'}</span>` + (r.reason ? `<br><small>${r.reason}</small>` : '')}</td>
             <td>
               <button class="btn" onclick="markAttendance(${r.member_id}, '${date}', 1)">حاضر</button>
-              <button class="btn danger" onclick="markAttendance(${r.member_id}, '${date}', 0)">غائب</button>
+              <button class="btn danger" onclick="markAttendanceAbsent(${r.member_id}, '${date}')">غائب</button>
             </td>
           </tr>`).join('') || '<tr><td colspan="3">لا يوجد مخدومين</td></tr>'}
       </table>
     </div>`;
 }
 
-async function markAttendance(member_id, date, present) {
-  await api('/api/attendance', { method: 'POST', body: JSON.stringify({ member_id, date, present }) });
+async function markAttendance(member_id, date, present, reason) {
+  await api('/api/attendance', { method: 'POST', body: JSON.stringify({ member_id, date, present, reason: reason || null }) });
   renderAttendance(date);
   loadAlerts();
+}
+
+function markAttendanceAbsent(member_id, date) {
+  const reason = prompt('سبب الغياب (اختياري):') || '';
+  markAttendance(member_id, date, 0, reason);
 }
 
 // ---------------- حضور الخدام ----------------
@@ -184,19 +216,25 @@ async function renderServants(date) {
         ${rows.map(r => `
           <tr>
             <td>${r.name}</td>
-            <td>${r.present === null ? '-' : `<span class="badge ${r.present ? 'present' : 'absent'}">${r.present ? 'حاضر' : 'غائب'}</span>`}</td>
-            <td><button class="btn" onclick="markServant(${r.khadem_id}, '${date}', 1)">حاضر</button>
-              <button class="btn danger" onclick="markServant(${r.khadem_id}, '${date}', 0)">غائب</button>
+            <td>${r.present === null ? '-' : `<span class="badge ${r.present ? 'present' : 'absent'}">${r.present ? 'حاضر' : 'غائب'}</span>` + (r.reason ? `<br><small>${r.reason}</small>` : '')}</td>
+            <td>
+              <button class="btn" onclick="markServant(${r.khadem_id}, '${date}', 1)">حاضر</button>
+              <button class="btn danger" onclick="markServantAbsent(${r.khadem_id}, '${date}')">غائب</button>
             </td>
           </tr>`).join('') || '<tr><td colspan="3">لا يوجد خدام</td></tr>'}
       </table>
     </div>`;
 }
 
-async function markServant(khadem_id, date, present) {
-  await api('/api/servant-attendance', { method: 'POST', body: JSON.stringify({ khadem_id, date, present }) });
+async function markServant(khadem_id, date, present, reason) {
+  await api('/api/servant-attendance', { method: 'POST', body: JSON.stringify({ khadem_id, date, present, reason: reason || null }) });
   renderServants(date);
   loadAlerts();
+}
+
+function markServantAbsent(khadem_id, date) {
+  const reason = prompt('سبب الغياب (اختياري):') || '';
+  markServant(khadem_id, date, 0, reason);
 }
 
 // ---------------- التقارير ----------------
@@ -274,7 +312,8 @@ async function renderUsers() {
     ? `<option value="khadem">خادم</option><option value="amin_khedma">أمين خدمة</option><option value="admin">أدمن</option>`
     : `<option value="khadem">خادم</option>`;
 
-  content.innerHTML = `<div class="card">
+  content.innerHTML = `
+    <div class="card">
       <h3>إضافة مستخدم جديد</h3>
       <div class="grid">
         <div><label>الاسم</label><input id="u_name"></div>
@@ -292,18 +331,33 @@ async function renderUsers() {
     <div class="card">
       <h3>المستخدمون</h3>
       <table>
-        <tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th>المجموعة</th><th>مفعّل</th><th></th></tr>
+        <tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th>المجموعة</th><th>تليجرام</th><th>مفعّل</th><th></th></tr>
         ${users.map(u => `
           <tr>
             <td>${u.name}</td><td>${u.username}</td><td>${ROLE_LABEL[u.role]}</td><td>${u.group_name ?? '-'}</td>
+            <td>${u.telegram_linked ? '✅ مربوط' : (u.telegram_link ? `<a href="${u.telegram_link}" target="_blank">لينك الربط</a>` : '-')}</td>
             <td>${u.active ? 'نعم' : 'لا'}</td>
             <td>
+              <button class="btn" onclick='editUser(${JSON.stringify({ id: u.id, name: u.name, group_name: u.group_name, role: u.role })})'>تعديل</button>
               <button class="btn" onclick="toggleUser(${u.id}, ${u.active ? 0 : 1})">${u.active ? 'تعطيل' : 'تفعيل'}</button>
               <button class="btn danger" onclick="deleteUser(${u.id})">حذف</button>
             </td>
           </tr>`).join('')}
       </table>
     </div>`;
+}
+
+function editUser(u) {
+  const name = prompt('الاسم:', u.name);
+  if (name === null) return;
+  let group_name = u.group_name;
+  if (u.role === 'khadem') {
+    const idx = prompt('المجموعة (اكتب رقم):\n' + GROUPS.map((g, i) => `${i + 1}) ${g}`).join('\n'), GROUPS.indexOf(u.group_name) + 1);
+    if (idx && GROUPS[+idx - 1]) group_name = GROUPS[+idx - 1];
+  }
+  api('/api/users/' + u.id, { method: 'PUT', body: JSON.stringify({ name, group_name }) })
+    .then(renderUsers)
+    .catch(e => alert(e.message));
 }
 
 function toggleGroupField() {
