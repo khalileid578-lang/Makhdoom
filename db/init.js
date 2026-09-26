@@ -67,7 +67,13 @@ async function ensureSchema() {
   // ترقيات آمنة على جداول موجودة بالفعل (بتتجاهل الخطأ لو العمود موجود أصلاً)
   const migrations = [
     "ALTER TABLE users ADD COLUMN group_name TEXT",
-    "ALTER TABLE members ADD COLUMN address TEXT"
+    "ALTER TABLE members ADD COLUMN address TEXT",
+    "ALTER TABLE members ADD COLUMN guardian_phone TEXT",
+    "ALTER TABLE members ADD COLUMN facebook_link TEXT",
+    "ALTER TABLE attendance ADD COLUMN reason TEXT",
+    "ALTER TABLE servant_attendance ADD COLUMN reason TEXT",
+    "ALTER TABLE users ADD COLUMN telegram_chat_id TEXT",
+    "ALTER TABLE users ADD COLUMN telegram_code TEXT"
   ];
   for (const sql of migrations) {
     try { await client.execute(sql); } catch (e) { /* العمود موجود بالفعل، تجاهل */ }
