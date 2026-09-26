@@ -72,7 +72,9 @@ app.post('/api/login', ah(async (req, res) => {
 
   const user = await get('SELECT * FROM users WHERE username = ? AND active = 1', [username]);
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
-    return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });req.session.user = { id: user.id, username: user.username, name: user.name, role: user.role, group_name: user.group_name || null };
+    return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });
+  }
+  req.session.user = { id: user.id, username: user.username, name: user.name, role: user.role, group_name: user.group_name || null };
   res.json({ user: req.session.user });
 }));
 
