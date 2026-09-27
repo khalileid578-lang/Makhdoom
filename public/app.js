@@ -342,6 +342,7 @@ async function renderUsers() {
             <td>${u.active ? 'نعم' : 'لا'}</td>
             <td>
               <button class="btn" onclick='editUser(${JSON.stringify({ id: u.id, name: u.name, group_name: u.group_name, role: u.role })})'>تعديل</button>
+              <button class="btn" onclick="resetPassword(${u.id})">🔑 كلمة مرور</button>
               <button class="btn" onclick="toggleUser(${u.id}, ${u.active ? 0 : 1})">${u.active ? 'تعطيل' : 'تفعيل'}</button>
               <button class="btn danger" onclick="deleteUser(${u.id})">حذف</button>
             </td>
@@ -362,7 +363,13 @@ function editUser(u) {
     .then(renderUsers)
     .catch(e => alert(e.message));
 }
-
+function resetPassword(id) {
+  const newPassword = prompt('اكتب كلمة المرور الجديدة:');
+  if (!newPassword) return;
+  api('/api/users/' + id, { method: 'PUT', body: JSON.stringify({ password: newPassword }) })
+    .then(() => alert('تم تغيير كلمة المرور بنجاح ✅'))
+    .catch(e => alert(e.message));
+}
 function toggleGroupField() {
   const role = document.getElementById('u_role').value;
   document.getElementById('u_group_wrap').style.display = role === 'khadem' ? 'block' : 'none';
