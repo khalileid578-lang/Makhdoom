@@ -32,6 +32,9 @@ async function init() {
 function logout() {
   api('/api/logout', { method: 'POST' }).finally(() => location.href = '/index.html');
 }
+function downloadBackup() {
+  window.location.href = '/api/export';
+}
 
 function buildTabs() {
   const tabs = [{ id: 'members', label: '👦 المخدومين' }, { id: 'attendance', label: '✅ الحضور' }];
