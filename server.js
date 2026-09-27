@@ -277,6 +277,19 @@ app.post('/api/attendance', requireAuth, ah(async (req, res) => {
     [member_id, date, present ? 1 : 0, present ? null : (reason || null), req.session.user.id]);
   res.json({ ok: true });
 }));
+// إلغاء تسجيل حضور يوم معين لمخدوم معين (مش بيمسح المخدوم، بيمسح بس علامة اليوم ده)
+app.delete('/api/attendance', requireAuth, ah(async (req, res) => {
+  const { member_id, date } = req.body || {};
+  if (!member_id || !date) return res.status(400).json({ error: 'بيانات ناقصة' });
+  if (req.session.user.role === 'khadem') {
+    const m = await get('SELECT group_name FROM members WHERE id = ?', [member_id]);
+    if (!m || m.group_name !== req.session.user.group_name) {
+      return res.status(403).json({ error: 'هذا المخدوم مش في مجموعتك' });
+    }
+  }
+  await run('DELETE FROM attendance WHERE member_id = ? AND date = ?', [member_id, date]);
+  res.json({ ok: true });
+}));
 
 // ---------- Servant attendance (حضور الخدام) ----------
 app.get('/api/servant-attendance', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
@@ -295,6 +308,13 @@ app.post('/api/servant-attendance', requireAuth, requireRole('admin', 'amin_khed
   await run(`INSERT INTO servant_attendance (khadem_id, date, present, reason, recorded_by) VALUES (?,?,?,?,?)
     ON CONFLICT(khadem_id, date) DO UPDATE SET present = excluded.present, reason = excluded.reason, recorded_by = excluded.recorded_by`,
     [khadem_id, date, present ? 1 : 0, present ? null : (reason || null), req.session.user.id]);
+  res.json({ ok: true });
+}));
+// إلغاء تسجيل حضور يوم معين لخادم معين (مش بيمسح الخادم، بيمسح بس علامة اليوم ده)
+app.delete('/api/servant-attendance', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
+  const { khadem_id, date } = req.body || {};
+  if (!khadem_id || !date) return res.status(400).json({ error: 'بيانات ناقصة' });
+  await run('DELETE FROM servant_attendance WHERE khadem_id = ? AND date = ?', [khadem_id, date]);
   res.json({ ok: true });
 }));
 
