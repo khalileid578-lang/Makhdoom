@@ -185,6 +185,7 @@ async function renderAttendance(date) {
             <td>
               <button class="btn" onclick="markAttendance(${r.member_id}, '${date}', 1)">حاضر</button>
               <button class="btn danger" onclick="markAttendanceAbsent(${r.member_id}, '${date}')">غائب</button>
+              ${r.present !== null ? `<button class="btn secondary" onclick="clearAttendance(${r.member_id}, '${date}')">↩️ إلغاء التسجيل</button>` : ''}
             </td>
           </tr>`).join('') || '<tr><td colspan="3">لا يوجد مخدومين</td></tr>'}
       </table>
@@ -200,6 +201,13 @@ async function markAttendance(member_id, date, present, reason) {
 function markAttendanceAbsent(member_id, date) {
   const reason = prompt('سبب الغياب (اختياري):') || '';
   markAttendance(member_id, date, 0, reason);
+}
+
+async function clearAttendance(member_id, date) {
+  if (!confirm('تأكيد إلغاء تسجيل هذا اليوم؟ (المخدوم نفسه مش هيتمسح)')) return;
+  await api('/api/attendance', { method: 'DELETE', body: JSON.stringify({ member_id, date }) });
+  renderAttendance(date);
+  loadAlerts();
 }
 
 // ---------------- حضور الخدام ----------------
@@ -223,6 +231,7 @@ async function renderServants(date) {
             <td>
               <button class="btn" onclick="markServant(${r.khadem_id}, '${date}', 1)">حاضر</button>
               <button class="btn danger" onclick="markServantAbsent(${r.khadem_id}, '${date}')">غائب</button>
+              ${r.present !== null ? `<button class="btn secondary" onclick="clearServant(${r.khadem_id}, '${date}')">↩️ إلغاء التسجيل</button>` : ''}
             </td>
           </tr>`).join('') || '<tr><td colspan="3">لا يوجد خدام</td></tr>'}
       </table>
@@ -238,6 +247,13 @@ async function markServant(khadem_id, date, present, reason) {
 function markServantAbsent(khadem_id, date) {
   const reason = prompt('سبب الغياب (اختياري):') || '';
   markServant(khadem_id, date, 0, reason);
+}
+
+async function clearServant(khadem_id, date) {
+  if (!confirm('تأكيد إلغاء تسجيل هذا اليوم؟ (الخادم نفسه مش هيتمسح)')) return;
+  await api('/api/servant-attendance', { method: 'DELETE', body: JSON.stringify({ khadem_id, date }) });
+  renderServants(date);
+  loadAlerts();
 }
 
 // ---------------- التقارير ----------------
