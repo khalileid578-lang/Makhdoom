@@ -434,6 +434,41 @@ app.get('/api/cron/weekly-report', ah(async (req, res) => {
   res.json({ ok: true, date, sent: results.length, results });
 }));
 
+// ---------- نسخة احتياطية قابلة للتنزيل (شيت CSV يتفتح في Excel) ----------
+function csvEscape(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+app.get('/api/export', requireAuth, ah(async (req, res) => {
+  const { role, group_name } = req.session.user;
+  const today = new Date().toISOString().slice(0, 10);
+  const groupsToShow = role === 'khadem' ? [group_name] : GROUPS;
+
+  const headers = ['النوع', 'الاسم', 'المجموعة', 'السن', 'الهاتف', 'تاريخ الميلاد', 'العنوان', 'موبايل ولي الأمر', 'رابط فيسبوك', 'اسم المستخدم', 'حالة تليجرام'];
+  const rows = [headers];
+
+  if (role !== 'khadem') {
+    const khadam = await all("SELECT name, username, group_name, telegram_chat_id FROM users WHERE role='khadem' AND active=1 ORDER BY group_name, name");
+    khadam.forEach(k => rows.push(['خادم', k.name, k.group_name || '', '', '', '', '', '', '', k.username, k.telegram_chat_id ? 'مربوط' : 'غير مربوط']));
+
+    const amins = await all("SELECT name, username, telegram_chat_id FROM users WHERE role='amin_khedma' AND active=1 ORDER BY name");
+    amins.forEach(a => rows.push(['أمين خدمة', a.name, '', '', '', '', '', '', '', a.username, a.telegram_chat_id ? 'مربوط' : 'غير مربوط']));
+  }
+
+  for (const g of groupsToShow) {
+    const members = await all('SELECT * FROM members WHERE group_name = ? AND active = 1 ORDER BY name', [g]);
+    members.forEach(m => rows.push(['مخدوم', m.name, m.group_name || '', m.age ?? '', m.phone ?? '', m.birth_date ?? '', m.address ?? '', m.guardian_phone ?? '', m.facebook_link ?? '', '', '']));
+  }
+
+  const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
+  const content = '\uFEFF' + csv; // BOM عشان Excel يقرأ العربي صح
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="backup-${today}.csv"`);
+  res.send(content);
+}));
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
   app.listen(PORT, () => console.log(`السيرفر شغال على المنفذ ${PORT}`));
