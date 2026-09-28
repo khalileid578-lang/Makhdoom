@@ -40,6 +40,7 @@ function buildTabs() {
   const tabs = [{ id: 'members', label: '👦 المخدومين' }, { id: 'attendance', label: '✅ الحضور' }];
   if (ME.role === 'admin' || ME.role === 'amin_khedma') {
     tabs.push({ id: 'servants', label: '👨‍🏫 حضور الخدام' });
+    tabs.push({ id: 'servantsReport', label: '📋 تقارير الخدام' });
   }
   tabs.push({ id: 'reports', label: '📊 التقارير' });
   if (ME.role === 'admin' || ME.role === 'amin_khedma') tabs.push({ id: 'users', label: '👨‍💼 المستخدمين' });
@@ -62,7 +63,7 @@ function showTab(id) {
   if (el) el.classList.add('active');
   const renderers = {
     members: renderMembers, attendance: renderAttendance,
-    servants: renderServants, reports: renderReports, users: renderUsers
+    servants: renderServants, servantsReport: renderServantsReport, reports: renderReports, users: renderUsers
   };
   renderers[id] && renderers[id]();
 }
@@ -418,4 +419,40 @@ async function deleteUser(id) {
   renderUsers();
 }
 
+// ---------------- تقارير الخدام ----------------
+async function renderServantsReport() {
+  const content = document.getElementById('content');
+  content.innerHTML = `
+    <div class="card">
+      <h3>📋 تقرير حضور وغياب الخدام</h3>
+      <label>الفصل</label>
+      <select id="srep_group" onchange="loadServantsReport()">
+        <option value="">كل الفصول</option>
+        ${GROUPS.map(g => `<option value="${g}">${g}</option>`).join('')}
+      </select>
+      <div class="grid" style="margin-top:10px;">
+        <div><label>من تاريخ</label><input type="date" id="srep_from"></div>
+        <div><label>إلى تاريخ</label><input type="date" id="srep_to"></div>
+      </div>
+      <div class="actions"><button class="btn" onclick="loadServantsReport()">عرض</button></div>
+      <div id="srep_table" style="margin-top:12px;"></div>
+    </div>`;
+  loadServantsReport();
+}
+
+async function loadServantsReport() {
+  const q = new URLSearchParams();
+  const from = document.getElementById('srep_from').value;
+  const to = document.getElementById('srep_to').value;
+  const group = document.getElementById('srep_group').value;
+  if (from) q.set('from', from);
+  if (to) q.set('to', to);
+  if (group) q.set('group_name', group);
+  const rows = await api('/api/reports/servants-attendance?' + q.toString());
+  document.getElementById('srep_table').innerHTML = `
+    <table>
+      <tr><th>التاريخ</th><th>حاضر</th><th>غائب</th></tr>
+      ${rows.map(r => `<tr><td>${r.date}</td><td>${r.present_count}</td><td>${r.absent_count}</td></tr>`).join('') || '<tr><td colspan="3">لا بيانات</td></tr>'}
+    </table>`;
+}
 init();
