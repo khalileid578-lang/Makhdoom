@@ -192,7 +192,7 @@ app.get('/api/members', requireAuth, ah(async (req, res) => {
   if (role === 'khadem') {
     rows = await all('SELECT * FROM members WHERE group_name = ? AND active = 1 ORDER BY name', [group_name]);
   } else {
-    rows = await all('SELECT * FROM members WHERE active = 1 ORDER BY name');
+   rows = await all("SELECT * FROM members WHERE active = 1 ORDER BY CASE group_name WHEN 'أولى إعدادي' THEN 1 WHEN 'تانية إعدادي' THEN 2 WHEN 'تالتة إعدادي' THEN 3 ELSE 4 END, name"); 
   }
   res.json(rows);
 }));
@@ -257,7 +257,7 @@ app.get('/api/attendance', requireAuth, ah(async (req, res) => {
     rows = await all(`
       SELECT m.id member_id, m.name, a.present, a.reason
       FROM members m LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
-      WHERE m.active = 1 ORDER BY m.name`, [date]);
+      WHERE m.active = 1 ORDER BY CASE m.group_name WHEN 'أولى إعدادي' THEN 1 WHEN 'تانية إعدادي' THEN 2 WHEN 'تالتة إعدادي' THEN 3 ELSE 4 END, m.name`, [date]);
   }
   res.json(rows);
 }));
