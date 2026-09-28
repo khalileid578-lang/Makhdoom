@@ -505,6 +505,32 @@ app.get('/api/export', requireAuth, ah(async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="backup-${today}.csv"`);
   res.send(content);
 }));
+// تفاصيل يوم معين في التقرير (أسماء الحاضرين والغايبين + سبب الغياب)
+app.get('/api/reports/day-details', requireAuth, ah(async (req, res) => {
+  const { type, date } = req.query;
+  if (!date) return res.status(400).json({ error: 'حدد التاريخ' });
+  const { role, group_name: myGroup } = req.session.user;
+  let group = req.query.group_name || null;
+  const ORDER = "CASE %s WHEN 'أولى إعدادي' THEN 1 WHEN 'تانية إعدادي' THEN 2 WHEN 'تالتة إعدادي' THEN 3 ELSE 4 END";
+
+  if (type === 'servants') {
+    if (role !== 'admin' && role !== 'amin_khedma') return res.status(403).json({ error: 'لا تملك صلاحية لهذا الإجراء' });
+    let sql = `SELECT u.name || ' — ' || COALESCE(u.group_name, '') AS name, sa.present, sa.reason
+      FROM servant_attendance sa JOIN users u ON u.id = sa.khadem_id WHERE sa.date = ?`;
+    const args = [date];
+    if (group) { sql += ' AND u.group_name = ?'; args.push(group); }
+    sql += ' ORDER BY ' + ORDER.replace('%s', 'u.group_name') + ', u.name';
+    return res.json(await all(sql, args));
+  }
+
+  if (role === 'khadem') group = myGroup; // الخادم يشوف فصله بس
+  let sql = `SELECT m.name || ' — ' || COALESCE(m.group_name, '') AS name, a.present, a.reason
+    FROM attendance a JOIN members m ON m.id = a.member_id WHERE a.date = ?`;
+  const args = [date];
+  if (group) { sql += ' AND m.group_name = ?'; args.push(group); }
+  sql += ' ORDER BY ' + ORDER.replace('%s', 'm.group_name') + ', m.name';
+  res.json(await all(sql, args));
+}));
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
   app.listen(PORT, () => console.log(`السيرفر شغال على المنفذ ${PORT}`));
