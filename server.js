@@ -296,10 +296,26 @@ app.get('/api/servant-attendance', requireAuth, requireRole('admin', 'amin_khedm
   const { date } = req.query;
   if (!date) return res.status(400).json({ error: 'حدد التاريخ' });
   const rows = await all(`
-    SELECT u.id khadem_id, u.name, sa.present, sa.reason
+    SELECT u.id khadem_id, u.name || ' — ' || COALESCE(u.group_name, '') AS name, sa.present, sa.reason
     FROM users u LEFT JOIN servant_attendance sa ON sa.khadem_id = u.id AND sa.date = ?
-    WHERE u.role = 'khadem' AND u.active = 1 ORDER BY u.name`, [date]);
+    WHERE u.role = 'khadem' AND u.active = 1
+    ORDER BY CASE u.group_name WHEN 'أولى إعدادي' THEN 1 WHEN 'تانية إعدادي' THEN 2 WHEN 'تالتة إعدادي' THEN 3 ELSE 4 END, u.name`, [date]);
   res.json(rows);
+}));
+
+// تقرير حضور الخدام (أدمن وأمين خدمة فقط) - مع فلتر بالفصل
+app.get('/api/reports/servants-attendance', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
+  const { from, to, group_name } = req.query;
+  let sql = `
+    SELECT sa.date,
+      SUM(sa.present) AS present_count,
+      SUM(1 - sa.present) AS absent_count
+    FROM servant_attendance sa JOIN users u ON u.id = sa.khadem_id
+    WHERE sa.date BETWEEN COALESCE(?, '0000-01-01') AND COALESCE(?, '9999-12-31')`;
+  const args = [from || null, to || null];
+  if (group_name) { sql += ' AND u.group_name = ?'; args.push(group_name); }
+  sql += ' GROUP BY sa.date ORDER BY sa.date';
+  res.json(await all(sql, args));
 }));
 
 app.post('/api/servant-attendance', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
