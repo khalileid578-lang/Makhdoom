@@ -307,7 +307,7 @@ async function loadAttendanceReport() {
   document.getElementById('rep_att_table').innerHTML = `
     <table>
       <tr><th>التاريخ</th><th>حاضر</th><th>غائب</th></tr>
-      ${rows.map(r => `<tr><td>${r.date}</td><td>${r.present_count}</td><td>${r.absent_count}</td></tr>`).join('') || '<tr><td colspan="3">لا بيانات</td></tr>'}
+      ${rows.map(r => `<tr><td><a href="#" onclick="showDayDetails('${r.date}'); return false;">${r.date} 🔍</a></td><td>${r.present_count}</td><td>${r.absent_count}</td></tr>`).join('') || '<tr><td colspan="3">لا بيانات</td></tr>'}
     </table>`;
 }
 
@@ -452,7 +452,31 @@ async function loadServantsReport() {
   document.getElementById('srep_table').innerHTML = `
     <table>
       <tr><th>التاريخ</th><th>حاضر</th><th>غائب</th></tr>
-      ${rows.map(r => `<tr><td>${r.date}</td><td>${r.present_count}</td><td>${r.absent_count}</td></tr>`).join('') || '<tr><td colspan="3">لا بيانات</td></tr>'}
+      ${rows.map(r => `<tr><td><a href="#" onclick="showDayDetails('${r.date}'); return false;">${r.date} 🔍</a></td><td>${r.present_count}</td><td>${r.absent_count}</td></tr>`).join('') || '<tr><td colspan="3">لا بيانات</td></tr>'}
     </table>`;
+}
+// ---------------- تفاصيل يوم في التقرير ----------------
+async function showDayDetails(date) {
+  const isServants = !!document.getElementById('srep_table');
+  const group = isServants
+    ? (document.getElementById('srep_group')?.value || '')
+    : (ME.role === 'khadem' ? '' : (document.getElementById('rep_group')?.value || ''));
+  const q = new URLSearchParams({ type: isServants ? 'servants' : 'members', date });
+  if (group) q.set('group_name', group);
+  const rows = await api('/api/reports/day-details?' + q.toString());
+  const present = rows.filter(r => r.present === 1);
+  const absent = rows.filter(r => r.present !== 1);
+  const html = `
+    <div class="card" id="day_details" style="margin-top:12px;background:#fbf7ec;">
+      <h4>📅 تفاصيل يوم ${date}</h4>
+      <b>✅ الحاضرين (${present.length}):</b>
+      <div>${present.map(r => `- ${r.name}`).join('<br>') || '(لا يوجد)'}</div>
+      <br>
+      <b>❌ الغائبين (${absent.length}):</b>
+      <div>${absent.map(r => `- ${r.name}` + (r.reason ? ` (السبب: ${r.reason})` : '')).join('<br>') || '(لا يوجد)'}</div>
+    </div>`;
+  const old = document.getElementById('day_details');
+  if (old) old.remove();
+  document.getElementById(isServants ? 'srep_table' : 'rep_att_table').insertAdjacentHTML('afterend', html);
 }
 init();
