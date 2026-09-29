@@ -4,6 +4,25 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 const ROLE_LABEL = { admin: 'أدمن', amin_khedma: 'أمين خدمة', khadem: 'خادم' };
 
+// ---------------- الوضع الليلي/النهاري ----------------
+function applyTheme(theme) {
+  if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');
+  const btn = document.getElementById('themeToggle');
+  if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+}
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  const next = current === 'dark' ? 'light' : 'dark';
+  try { localStorage.setItem('church_theme', next); } catch (e) {}
+  applyTheme(next);
+}
+(function initTheme() {
+  let saved = 'light';
+  try { saved = localStorage.getItem('church_theme') || 'light'; } catch (e) {}
+  applyTheme(saved);
+})();
+
 async function api(url, opts = {}) {
   const r = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
@@ -32,6 +51,7 @@ async function init() {
 function logout() {
   api('/api/logout', { method: 'POST' }).finally(() => location.href = '/index.html');
 }
+
 function downloadBackup() {
   window.location.href = '/api/export';
 }
@@ -110,7 +130,7 @@ async function renderMembers() {
     </div>
     <div class="card">
       <h3>قائمة المخدومين (${members.length})</h3>
-      <table>
+      <div class="table-wrap"><table>
         <tr><th>الاسم</th><th>السن</th><th>الهاتف</th><th>موبايل ولي الأمر</th><th>فيسبوك</th><th>المجموعة</th><th></th></tr>
         ${members.map(m => `
           <tr>
@@ -118,12 +138,12 @@ async function renderMembers() {
             <td>${m.guardian_phone ?? '-'}</td>
             <td>${m.facebook_link ? `<a href="${m.facebook_link}" target="_blank">رابط</a>` : '-'}</td>
             <td>${m.group_name ?? '-'}</td>
-            <td>
+            <td class="row-actions">
               <button class="btn" onclick='editMember(${JSON.stringify(m)})'>تعديل</button>
               <button class="btn danger" onclick="deleteMember(${m.id})">حذف</button>
             </td>
           </tr>`).join('')}
-      </table>
+      </table></div>
     </div>`;
 }
 
@@ -177,19 +197,19 @@ async function renderAttendance(date) {
       <input type="date" id="att_date" value="${date}" onchange="renderAttendance(this.value)">
     </div>
     <div class="card">
-      <table>
+      <div class="table-wrap"><table>
         <tr><th>الاسم</th><th>الحالة</th><th>تسجيل</th></tr>
         ${rows.map(r => `
           <tr>
             <td>${r.name}</td>
             <td>${r.present === null ? '-' : `<span class="badge ${r.present ? 'present' : 'absent'}">${r.present ? 'حاضر' : 'غائب'}</span>` + (r.reason ? `<br><small>${r.reason}</small>` : '')}</td>
-            <td>
+            <td class="row-actions">
               <button class="btn" onclick="markAttendance(${r.member_id}, '${date}', 1)">حاضر</button>
               <button class="btn danger" onclick="markAttendanceAbsent(${r.member_id}, '${date}')">غائب</button>
-              ${r.present !== null ? `<button class="btn secondary" onclick="clearAttendance(${r.member_id}, '${date}')">↩️ إلغاء التسجيل</button>` : ''}
+              ${r.present !== null ? `<button class="btn secondary" onclick="clearAttendance(${r.member_id}, '${date}')">↩️ إلغاء</button>` : ''}
             </td>
           </tr>`).join('') || '<tr><td colspan="3">لا يوجد مخدومين</td></tr>'}
-      </table>
+      </table></div>
     </div>`;
 }
 
@@ -223,19 +243,19 @@ async function renderServants(date) {
       <input type="date" id="srv_date" value="${date}" onchange="renderServants(this.value)">
     </div>
     <div class="card">
-      <table>
+      <div class="table-wrap"><table>
         <tr><th>الاسم</th><th>الحالة</th><th>تسجيل</th></tr>
         ${rows.map(r => `
           <tr>
             <td>${r.name}</td>
             <td>${r.present === null ? '-' : `<span class="badge ${r.present ? 'present' : 'absent'}">${r.present ? 'حاضر' : 'غائب'}</span>` + (r.reason ? `<br><small>${r.reason}</small>` : '')}</td>
-            <td>
+            <td class="row-actions">
               <button class="btn" onclick="markServant(${r.khadem_id}, '${date}', 1)">حاضر</button>
               <button class="btn danger" onclick="markServantAbsent(${r.khadem_id}, '${date}')">غائب</button>
-              ${r.present !== null ? `<button class="btn secondary" onclick="clearServant(${r.khadem_id}, '${date}')">↩️ إلغاء التسجيل</button>` : ''}
+              ${r.present !== null ? `<button class="btn secondary" onclick="clearServant(${r.khadem_id}, '${date}')">↩️ إلغاء</button>` : ''}
             </td>
           </tr>`).join('') || '<tr><td colspan="3">لا يوجد خدام</td></tr>'}
-      </table>
+      </table></div>
     </div>`;
 }
 
@@ -305,20 +325,20 @@ async function loadAttendanceReport() {
   if (group) q.set('group_name', group);
   const rows = await api('/api/reports/attendance?' + q.toString());
   document.getElementById('rep_att_table').innerHTML = `
-    <table>
+    <div class="table-wrap"><table>
       <tr><th>التاريخ</th><th>حاضر</th><th>غائب</th></tr>
       ${rows.map(r => `<tr><td><a href="#" onclick="showDayDetails('${r.date}'); return false;">${r.date} 🔍</a></td><td>${r.present_count}</td><td>${r.absent_count}</td></tr>`).join('') || '<tr><td colspan="3">لا بيانات</td></tr>'}
-    </table>`;
+    </table></div>`;
 }
 
 async function loadBirthdays() {
   const month = document.getElementById('rep_month').value;
   const rows = await api('/api/reports/birthdays?month=' + month);
   document.getElementById('rep_bday_table').innerHTML = `
-    <table>
+    <div class="table-wrap"><table>
       <tr><th>الاسم</th><th>تاريخ الميلاد</th><th>المجموعة</th></tr>
       ${rows.map(r => `<tr><td>${r.name}</td><td>${r.birth_date}</td><td>${r.group_name ?? '-'}</td></tr>`).join('') || '<tr><td colspan="3">لا أعياد ميلاد هذا الشهر</td></tr>'}
-    </table>`;
+    </table></div>`;
 }
 
 // ---------------- المستخدمين (أدمن + أمين خدمة) ----------------
@@ -350,21 +370,21 @@ async function renderUsers() {
     </div>
     <div class="card">
       <h3>المستخدمون</h3>
-      <table>
+      <div class="table-wrap"><table>
         <tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th>المجموعة</th><th>تليجرام</th><th>مفعّل</th><th></th></tr>
         ${users.map(u => `
           <tr>
             <td>${u.name}</td><td>${u.username}</td><td>${ROLE_LABEL[u.role]}</td><td>${u.group_name ?? '-'}</td>
             <td>${u.telegram_linked ? '✅ مربوط' : (u.telegram_link ? `<a href="${u.telegram_link}" target="_blank">لينك الربط</a>` : '-')}</td>
             <td>${u.active ? 'نعم' : 'لا'}</td>
-            <td>
+            <td class="row-actions">
               <button class="btn" onclick='editUser(${JSON.stringify({ id: u.id, name: u.name, group_name: u.group_name, role: u.role })})'>تعديل</button>
-              <button class="btn" onclick="resetPassword(${u.id})">🔑 كلمة مرور</button>
+              <button class="btn" onclick="resetPassword(${u.id})">🔑 كلمة</button>
               <button class="btn" onclick="toggleUser(${u.id}, ${u.active ? 0 : 1})">${u.active ? 'تعطيل' : 'تفعيل'}</button>
               <button class="btn danger" onclick="deleteUser(${u.id})">حذف</button>
             </td>
           </tr>`).join('')}
-      </table>
+      </table></div>
     </div>`;
 }
 
@@ -380,6 +400,7 @@ function editUser(u) {
     .then(renderUsers)
     .catch(e => alert(e.message));
 }
+
 function resetPassword(id) {
   const newPassword = prompt('اكتب كلمة المرور الجديدة:');
   if (!newPassword) return;
@@ -387,6 +408,7 @@ function resetPassword(id) {
     .then(() => alert('تم تغيير كلمة المرور بنجاح ✅'))
     .catch(e => alert(e.message));
 }
+
 function toggleGroupField() {
   const role = document.getElementById('u_role').value;
   document.getElementById('u_group_wrap').style.display = role === 'khadem' ? 'block' : 'none';
@@ -450,11 +472,12 @@ async function loadServantsReport() {
   if (group) q.set('group_name', group);
   const rows = await api('/api/reports/servants-attendance?' + q.toString());
   document.getElementById('srep_table').innerHTML = `
-    <table>
+    <div class="table-wrap"><table>
       <tr><th>التاريخ</th><th>حاضر</th><th>غائب</th></tr>
       ${rows.map(r => `<tr><td><a href="#" onclick="showDayDetails('${r.date}'); return false;">${r.date} 🔍</a></td><td>${r.present_count}</td><td>${r.absent_count}</td></tr>`).join('') || '<tr><td colspan="3">لا بيانات</td></tr>'}
-    </table>`;
+    </table></div>`;
 }
+
 // ---------------- تفاصيل يوم في التقرير ----------------
 async function showDayDetails(date) {
   const isServants = !!document.getElementById('srep_table');
@@ -479,4 +502,5 @@ async function showDayDetails(date) {
   if (old) old.remove();
   document.getElementById(isServants ? 'srep_table' : 'rep_att_table').insertAdjacentHTML('afterend', html);
 }
+
 init();
