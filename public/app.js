@@ -130,11 +130,13 @@ async function renderMembers() {
     </div>
     <div class="card">
       <h3>قائمة المخدومين (${members.length})</h3>
-      <div class="table-wrap"><table>
-        <tr><th>الاسم</th><th>السن</th><th>الهاتف</th><th>موبايل ولي الأمر</th><th>فيسبوك</th><th>المجموعة</th><th></th></tr>
+    <div class="table-wrap"><table>
+        <tr><th>الاسم</th><th>السن</th><th>الهاتف</th><th>تاريخ الميلاد</th><th>العنوان</th><th>موبايل ولي الأمر</th><th>فيسبوك</th><th>المجموعة</th><th></th></tr>
         ${members.map(m => `
           <tr>
             <td>${m.name}</td><td>${m.age ?? '-'}</td><td>${m.phone ?? '-'}</td>
+            <td>${m.birth_date ?? '-'}</td>
+            <td>${m.address ?? '-'}</td>
             <td>${m.guardian_phone ?? '-'}</td>
             <td>${m.facebook_link ? `<a href="${m.facebook_link}" target="_blank">رابط</a>` : '-'}</td>
             <td>${m.group_name ?? '-'}</td>
