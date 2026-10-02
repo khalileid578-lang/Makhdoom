@@ -173,7 +173,12 @@ function editMember(m) {
   const address = prompt('العنوان:', m.address ?? '');
   const guardian_phone = prompt('موبايل ولي الأمر:', m.guardian_phone ?? '');
   const facebook_link = prompt('رابط فيسبوك:', m.facebook_link ?? '');
-  updateMember(m.id, { name, age: +age || null, phone, address, guardian_phone, facebook_link });
+  let group_name;
+  if (ME.role !== 'khadem') {
+    const idx = prompt('المجموعة (اكتب رقم):\n' + GROUPS.map((g, i) => `${i + 1}) ${g}`).join('\n'), GROUPS.indexOf(m.group_name) + 1);
+    if (idx && GROUPS[+idx - 1]) group_name = GROUPS[+idx - 1];
+  }
+  updateMember(m.id, { name, age: +age || null, phone, address, guardian_phone, facebook_link, group_name });
 }
 
 async function updateMember(id, body) {
