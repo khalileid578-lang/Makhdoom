@@ -421,7 +421,7 @@ async function renderUsers() {
         ${users.map(u => `
           <tr>
             <td>${u.name}</td><td>${u.username}</td><td>${ROLE_LABEL[u.role]}</td><td>${u.group_name ?? '-'}</td>
-            <td>${u.telegram_linked ? '✅ مربوط' : (u.telegram_link ? `<a href="${u.telegram_link}" target="_blank">لينك الربط</a>` : '-')}</td>
+            <td>${u.telegram_linked ? `✅ مربوط <button class="btn secondary" onclick="resetTelegram(${u.id})">🔄 تغيير</button>` : (u.telegram_link ? `<a href="${u.telegram_link}" target="_blank">لينك الربط</a>` : '-')}</td>
             <td>${u.active ? 'نعم' : 'لا'}</td>
             <td class="row-actions">
               <button class="btn" onclick='editUser(${JSON.stringify({ id: u.id, name: u.name, group_name: u.group_name, role: u.role })})'>تعديل</button>
@@ -455,6 +455,11 @@ function resetPassword(id) {
     .catch(e => alert(e.message));
 }
 
+async function resetTelegram(id) {
+  if (!confirm('تأكيد تصفير ربط تليجرام؟ هيظهر اللينك تاني عشان تبعته لربط جديد')) return;
+  await api('/api/users/' + id, { method: 'PUT', body: JSON.stringify({ reset_telegram: true }) });
+  renderUsers();
+}
 function toggleGroupField() {
   const role = document.getElementById('u_role').value;
   document.getElementById('u_group_wrap').style.display = role === 'khadem' ? 'block' : 'none';
