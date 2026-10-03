@@ -203,27 +203,44 @@ async function renderAttendance(date) {
       <label>تاريخ الاجتماع</label>
       <input type="date" id="att_date" value="${date}" onchange="renderAttendance(this.value)">
     </div>
-    <div class="card">
+<div class="card">
       <div class="table-wrap"><table>
         <tr><th>الاسم</th><th>الحالة</th><th>تسجيل</th></tr>
         ${rows.map(r => `
           <tr>
             <td>${r.name}</td>
-            <td>${r.present === null ? '-' : `<span class="badge ${r.present ? 'present' : 'absent'}">${r.present ? 'حاضر' : 'غائب'}</span>` + (r.reason ? `<br><small>${r.reason}</small>` : '')}</td>
+            <td id="att-status-${r.member_id}">${attendanceStatusHTML(r.present, r.reason)}</td>
             <td class="row-actions">
               <button class="btn" onclick="markAttendance(${r.member_id}, '${date}', 1)">حاضر</button>
               <button class="btn danger" onclick="markAttendanceAbsent(${r.member_id}, '${date}')">غائب</button>
-              ${r.present !== null ? `<button class="btn secondary" onclick="clearAttendance(${r.member_id}, '${date}')">↩️ إلغاء</button>` : ''}
+              <button class="btn secondary" id="att-clear-${r.member_id}" style="${r.present === null ? 'display:none' : ''}" onclick="clearAttendance(${r.member_id}, '${date}')">↩️ إلغاء</button>
             </td>
           </tr>`).join('') || '<tr><td colspan="3">لا يوجد مخدومين</td></tr>'}
       </table></div>
     </div>`;
 }
 
+function attendanceStatusHTML(present, reason) {
+  if (present === null) return '-';
+  return `<span class="badge ${present ? 'present' : 'absent'}">${present ? 'حاضر' : 'غائب'}</span>` + (reason ? `<br><small>${reason}</small>` : '');
+}
+
+function updateAttendanceRowUI(member_id, present, reason) {
+  const statusCell = document.getElementById('att-status-' + member_id);
+  if (statusCell) statusCell.innerHTML = attendanceStatusHTML(present, reason);
+  const clearBtn = document.getElementById('att-clear-' + member_id);
+  if (clearBtn) clearBtn.style.display = present === null ? 'none' : '';
+}
+
 async function markAttendance(member_id, date, present, reason) {
-  await api('/api/attendance', { method: 'POST', body: JSON.stringify({ member_id, date, present, reason: reason || null }) });
-  renderAttendance(date);
-  loadAlerts();
+  updateAttendanceRowUI(member_id, present, reason);
+  try {
+    await api('/api/attendance', { method: 'POST', body: JSON.stringify({ member_id, date, present, reason: reason || null }) });
+    loadAlerts();
+  } catch (e) {
+    alert('حصل خطأ ومتسجلش: ' + e.message);
+    renderAttendance(date);
+  }
 }
 
 function markAttendanceAbsent(member_id, date) {
@@ -233,11 +250,16 @@ function markAttendanceAbsent(member_id, date) {
 
 async function clearAttendance(member_id, date) {
   if (!confirm('تأكيد إلغاء تسجيل هذا اليوم؟ (المخدوم نفسه مش هيتمسح)')) return;
-  await api('/api/attendance', { method: 'DELETE', body: JSON.stringify({ member_id, date }) });
-  renderAttendance(date);
-  loadAlerts();
+  updateAttendanceRowUI(member_id, null, null);
+  try {
+    await api('/api/attendance', { method: 'DELETE', body: JSON.stringify({ member_id, date }) });
+    loadAlerts();
+  } catch (e) {
+    alert('حصل خطأ: ' + e.message);
+    renderAttendance(date);
+  }
 }
-
+    
 // ---------------- حضور الخدام ----------------
 async function renderServants(date) {
   date = date || today();
@@ -252,24 +274,36 @@ async function renderServants(date) {
     <div class="card">
       <div class="table-wrap"><table>
         <tr><th>الاسم</th><th>الحالة</th><th>تسجيل</th></tr>
-        ${rows.map(r => `
+${rows.map(r => `
           <tr>
             <td>${r.name}</td>
-            <td>${r.present === null ? '-' : `<span class="badge ${r.present ? 'present' : 'absent'}">${r.present ? 'حاضر' : 'غائب'}</span>` + (r.reason ? `<br><small>${r.reason}</small>` : '')}</td>
+            <td id="srv-status-${r.khadem_id}">${attendanceStatusHTML(r.present, r.reason)}</td>
             <td class="row-actions">
               <button class="btn" onclick="markServant(${r.khadem_id}, '${date}', 1)">حاضر</button>
               <button class="btn danger" onclick="markServantAbsent(${r.khadem_id}, '${date}')">غائب</button>
-              ${r.present !== null ? `<button class="btn secondary" onclick="clearServant(${r.khadem_id}, '${date}')">↩️ إلغاء</button>` : ''}
+              <button class="btn secondary" id="srv-clear-${r.khadem_id}" style="${r.present === null ? 'display:none' : ''}" onclick="clearServant(${r.khadem_id}, '${date}')">↩️ إلغاء</button>
             </td>
           </tr>`).join('') || '<tr><td colspan="3">لا يوجد خدام</td></tr>'}
       </table></div>
     </div>`;
 }
 
+function updateServantRowUI(khadem_id, present, reason) {
+  const statusCell = document.getElementById('srv-status-' + khadem_id);
+  if (statusCell) statusCell.innerHTML = attendanceStatusHTML(present, reason);
+  const clearBtn = document.getElementById('srv-clear-' + khadem_id);
+  if (clearBtn) clearBtn.style.display = present === null ? 'none' : '';
+}
+
 async function markServant(khadem_id, date, present, reason) {
-  await api('/api/servant-attendance', { method: 'POST', body: JSON.stringify({ khadem_id, date, present, reason: reason || null }) });
-  renderServants(date);
-  loadAlerts();
+  updateServantRowUI(khadem_id, present, reason);
+  try {
+    await api('/api/servant-attendance', { method: 'POST', body: JSON.stringify({ khadem_id, date, present, reason: reason || null }) });
+    loadAlerts();
+  } catch (e) {
+    alert('حصل خطأ ومتسجلش: ' + e.message);
+    renderServants(date);
+  }
 }
 
 function markServantAbsent(khadem_id, date) {
@@ -279,11 +313,16 @@ function markServantAbsent(khadem_id, date) {
 
 async function clearServant(khadem_id, date) {
   if (!confirm('تأكيد إلغاء تسجيل هذا اليوم؟ (الخادم نفسه مش هيتمسح)')) return;
-  await api('/api/servant-attendance', { method: 'DELETE', body: JSON.stringify({ khadem_id, date }) });
-  renderServants(date);
-  loadAlerts();
+  updateServantRowUI(khadem_id, null, null);
+  try {
+    await api('/api/servant-attendance', { method: 'DELETE', body: JSON.stringify({ khadem_id, date }) });
+    loadAlerts();
+  } catch (e) {
+    alert('حصل خطأ: ' + e.message);
+    renderServants(date);
+  }
 }
-
+        
 // ---------------- التقارير ----------------
 async function renderReports() {
   const content = document.getElementById('content');
