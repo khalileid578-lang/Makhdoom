@@ -129,7 +129,7 @@ app.put('/api/users/:id', requireAuth, requireRole('admin', 'amin_khedma'), ah(a
   if (myRole === 'amin_khedma' && existing.role !== 'khadem') {
     return res.status(403).json({ error: 'غير مسموح' });
   }
-  const { name, role, group_name, active, password } = req.body || {};
+  const { name, role, group_name, active, password, reset_telegram } = req.body || {};
   if (myRole === 'amin_khedma' && role && role !== 'khadem') {
     return res.status(403).json({ error: 'غير مسموح' });
   }
@@ -137,6 +137,9 @@ app.put('/api/users/:id', requireAuth, requireRole('admin', 'amin_khedma'), ah(a
     [name ?? null, role ?? null, group_name ?? null, active === undefined ? null : (active ? 1 : 0), id]);
   if (password) {
     await run('UPDATE users SET password_hash = ? WHERE id = ?', [bcrypt.hashSync(password, 10), id]);
+  }
+  if (reset_telegram) {
+    await run('UPDATE users SET telegram_chat_id = NULL WHERE id = ?', [id]);
   }
   // كل مستخدم لازم يكون ليه كود تليجرام حتى لو اتعمل قبل إضافة الميزة دي
   let updated = await get('SELECT id, username, name, role, group_name, active, telegram_chat_id, telegram_code FROM users WHERE id = ?', [id]);
