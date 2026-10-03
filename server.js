@@ -306,16 +306,26 @@ app.get('/api/servant-attendance', requireAuth, requireRole('admin', 'amin_khedm
 // تقرير حضور الخدام (أدمن وأمين خدمة فقط) - مع فلتر بالفصل
 app.get('/api/reports/servants-attendance', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
   const { from, to, group_name } = req.query;
+
+  let totalSql = "SELECT COUNT(*) c FROM users WHERE role='khadem' AND active = 1";
+  const totalArgs = [];
+  if (group_name) { totalSql += ' AND group_name = ?'; totalArgs.push(group_name); }
+  const totalRow = await get(totalSql, totalArgs);
+  const totalKhadam = Number(totalRow.c);
+
   let sql = `
-    SELECT sa.date,
-      SUM(sa.present) AS present_count,
-      SUM(1 - sa.present) AS absent_count
+    SELECT sa.date, SUM(CASE WHEN sa.present = 1 THEN 1 ELSE 0 END) AS present_count
     FROM servant_attendance sa JOIN users u ON u.id = sa.khadem_id
     WHERE sa.date BETWEEN COALESCE(?, '0000-01-01') AND COALESCE(?, '9999-12-31')`;
   const args = [from || null, to || null];
   if (group_name) { sql += ' AND u.group_name = ?'; args.push(group_name); }
   sql += ' GROUP BY sa.date ORDER BY sa.date';
-  res.json(await all(sql, args));
+  const rows = await all(sql, args);
+  res.json(rows.map(r => ({
+    date: r.date,
+    present_count: Number(r.present_count),
+    absent_count: Math.max(totalKhadam - Number(r.present_count), 0)
+  })));
 }));
 
 app.post('/api/servant-attendance', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
@@ -341,21 +351,22 @@ app.get('/api/alerts/latest', requireAuth, ah(async (req, res) => {
   if (!lastDate) return res.json({ date: null, absentMembers: [], absentServants: [] });
 
   const { role, group_name } = req.session.user;
+  // أي مخدوم/خادم معملوش له حضور أو غياب في اليوم ده يتحسب غايب تلقائي (present IS NULL)
   let absentMembers;
   if (role === 'khadem') {
     absentMembers = await all(`
-      SELECT m.name FROM attendance a JOIN members m ON m.id = a.member_id
-      WHERE a.date = ? AND a.present = 0 AND m.group_name = ?`, [lastDate, group_name]);
+      SELECT m.name FROM members m LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
+      WHERE m.active = 1 AND m.group_name = ? AND (a.present IS NULL OR a.present = 0)`, [lastDate, group_name]);
   } else {
     absentMembers = await all(`
-      SELECT m.name FROM attendance a JOIN members m ON m.id = a.member_id
-      WHERE a.date = ? AND a.present = 0`, [lastDate]);
+      SELECT m.name FROM members m LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
+      WHERE m.active = 1 AND (a.present IS NULL OR a.present = 0)`, [lastDate]);
   }
   let absentServants = [];
   if (role === 'admin' || role === 'amin_khedma') {
     absentServants = await all(`
-      SELECT u.name FROM servant_attendance sa JOIN users u ON u.id = sa.khadem_id
-      WHERE sa.date = ? AND sa.present = 0`, [lastDate]);
+      SELECT u.name FROM users u LEFT JOIN servant_attendance sa ON sa.khadem_id = u.id AND sa.date = ?
+      WHERE u.role = 'khadem' AND u.active = 1 AND (sa.present IS NULL OR sa.present = 0)`, [lastDate]);
   }
   res.json({
     date: lastDate,
@@ -372,10 +383,15 @@ app.get('/api/reports/attendance', requireAuth, ah(async (req, res) => {
   let group = req.query.group_name || null;
   if (role === 'khadem') group = group_name; // الخادم يشوف فصله بس مهما بعت
 
+  // إجمالي عدد المخدومين النشطين في النطاق المطلوب، عشان نحسب غياب أي حد معملوش حضور تلقائي
+  let totalSql = 'SELECT COUNT(*) c FROM members WHERE active = 1';
+  const totalArgs = [];
+  if (group) { totalSql += ' AND group_name = ?'; totalArgs.push(group); }
+  const totalRow = await get(totalSql, totalArgs);
+  const totalMembers = Number(totalRow.c);
+
   let sql = `
-    SELECT a.date,
-      SUM(a.present) as present_count,
-      SUM(1 - a.present) as absent_count
+    SELECT a.date, SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) as present_count
     FROM attendance a JOIN members m ON m.id = a.member_id
     WHERE a.date BETWEEN COALESCE(?, '0000-01-01') AND COALESCE(?, '9999-12-31')`;
   const args = [from || null, to || null];
@@ -383,7 +399,11 @@ app.get('/api/reports/attendance', requireAuth, ah(async (req, res) => {
   sql += ' GROUP BY a.date ORDER BY a.date';
 
   const rows = await all(sql, args);
-  res.json(rows);
+  res.json(rows.map(r => ({
+    date: r.date,
+    present_count: Number(r.present_count),
+    absent_count: Math.max(totalMembers - Number(r.present_count), 0)
+  })));
 }));
 
 app.get('/api/reports/birthdays', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
@@ -513,10 +533,12 @@ app.get('/api/reports/day-details', requireAuth, ah(async (req, res) => {
   let group = req.query.group_name || null;
   const ORDER = "CASE %s WHEN 'أولى إعدادي' THEN 1 WHEN 'تانية إعدادي' THEN 2 WHEN 'تالتة إعدادي' THEN 3 ELSE 4 END";
 
+  // LEFT JOIN من جدول الأشخاص نفسه، عشان أي حد معملوش حضور ولا غياب يظهر "غايب" تلقائي
   if (type === 'servants') {
     if (role !== 'admin' && role !== 'amin_khedma') return res.status(403).json({ error: 'لا تملك صلاحية لهذا الإجراء' });
     let sql = `SELECT u.name || ' — ' || COALESCE(u.group_name, '') AS name, sa.present, sa.reason
-      FROM servant_attendance sa JOIN users u ON u.id = sa.khadem_id WHERE sa.date = ?`;
+      FROM users u LEFT JOIN servant_attendance sa ON sa.khadem_id = u.id AND sa.date = ?
+      WHERE u.role = 'khadem' AND u.active = 1`;
     const args = [date];
     if (group) { sql += ' AND u.group_name = ?'; args.push(group); }
     sql += ' ORDER BY ' + ORDER.replace('%s', 'u.group_name') + ', u.name';
@@ -525,7 +547,8 @@ app.get('/api/reports/day-details', requireAuth, ah(async (req, res) => {
 
   if (role === 'khadem') group = myGroup; // الخادم يشوف فصله بس
   let sql = `SELECT m.name || ' — ' || COALESCE(m.group_name, '') AS name, a.present, a.reason
-    FROM attendance a JOIN members m ON m.id = a.member_id WHERE a.date = ?`;
+    FROM members m LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
+    WHERE m.active = 1`;
   const args = [date];
   if (group) { sql += ' AND m.group_name = ?'; args.push(group); }
   sql += ' ORDER BY ' + ORDER.replace('%s', 'm.group_name') + ', m.name';
