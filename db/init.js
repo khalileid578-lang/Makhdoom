@@ -73,7 +73,8 @@ async function ensureSchema() {
     "ALTER TABLE attendance ADD COLUMN reason TEXT",
     "ALTER TABLE servant_attendance ADD COLUMN reason TEXT",
     "ALTER TABLE users ADD COLUMN telegram_chat_id TEXT",
-    "ALTER TABLE users ADD COLUMN telegram_code TEXT"
+    "ALTER TABLE users ADD COLUMN telegram_code TEXT",
+    "ALTER TABLE members ADD COLUMN assigned_khadem_id INTEGER"
   ];
   for (const sql of migrations) {
     try { await client.execute(sql); } catch (e) { /* العمود موجود بالفعل، تجاهل */ }
