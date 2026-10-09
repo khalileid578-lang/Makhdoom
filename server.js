@@ -186,29 +186,45 @@ app.post('/api/telegram/webhook/:secret', ah(async (req, res) => {
   }
   res.json({ ok: true });
 }));
-
+ 
 // ---------- Members (المخدومين) ----------
-// أدمن وأمين خدمة: كل المخدومين. خادم: مخدومين مجموعته بس (لكن بتحكم كامل فيهم)
 app.get('/api/members', requireAuth, ah(async (req, res) => {
   const { role, group_name } = req.session.user;
-  let rows;
-  if (role === 'khadem') {
-    rows = await all('SELECT * FROM members WHERE group_name = ? AND active = 1 ORDER BY name', [group_name]);
-  } else {
-   rows = await all("SELECT * FROM members WHERE active = 1 ORDER BY CASE group_name WHEN 'أولى إعدادي' THEN 1 WHEN 'تانية إعدادي' THEN 2 WHEN 'تالتة إعدادي' THEN 3 ELSE 4 END, name"); 
-  }
+  const base = `SELECT m.*, u.name AS khadem_name FROM members m
+    LEFT JOIN users u ON u.id = m.assigned_khadem_id WHERE m.active = 1`;
+  const rows = role === 'khadem'
+    ? await all(base + ' AND m.group_name = ? ORDER BY m.name', [group_name])
+    : await all(base + ' ORDER BY m.name');
   res.json(rows);
+}));
+
+// قايمة الخدام (لاختيار الخادم المسؤول). الخادم يشوف خدام فصله بس
+app.get('/api/group-khadam', requireAuth, ah(async (req, res) => {
+  const { role, group_name: myGroup } = req.session.user;
+  if (role === 'khadem' && !myGroup) return res.json([]);
+  const group = role === 'khadem' ? myGroup : (req.query.group_name || null);
+  let sql = "SELECT id, name, group_name FROM users WHERE role = 'khadem' AND active = 1";
+  const args = [];
+  if (group) { sql += ' AND group_name = ?'; args.push(group); }
+  res.json(await all(sql + ' ORDER BY name', args));
 }));
 
 app.post('/api/members', requireAuth, requireRole('admin', 'amin_khedma', 'khadem'), ah(async (req, res) => {
   const { role, group_name: myGroup } = req.session.user;
-  let { name, age, phone, birth_date, group_name, address, guardian_phone, facebook_link } = req.body || {};
+  let { name, age, phone, birth_date, group_name, address, guardian_phone, facebook_link, assigned_khadem_id } = req.body || {};
   if (!name) return res.status(400).json({ error: 'اسم المخدوم مطلوب' });
-  if (role === 'khadem') group_name = myGroup; // الخادم يقدر يضيف بس في مجموعته
+  if (role === 'khadem') group_name = myGroup;
   else if (group_name && !GROUPS.includes(group_name)) return res.status(400).json({ error: 'مجموعة غير صحيحة' });
 
-  const info = await run(`INSERT INTO members (name, age, phone, birth_date, group_name, address, guardian_phone, facebook_link)
-    VALUES (?,?,?,?,?,?,?,?)`, [name, age || null, phone || null, birth_date || null, group_name || null, address || null, guardian_phone || null, facebook_link || null]);
+  let khademId = null;
+  if (assigned_khadem_id) {
+    const k = await get("SELECT id FROM users WHERE id = ? AND role = 'khadem' AND active = 1 AND group_name = ?", [assigned_khadem_id, group_name]);
+    if (!k) return res.status(400).json({ error: 'الخادم ده مش من نفس فصل المخدوم' });
+    khademId = Number(k.id);
+  }
+
+  const info = await run(`INSERT INTO members (name, age, phone, birth_date, group_name, address, guardian_phone, facebook_link, assigned_khadem_id)
+    VALUES (?,?,?,?,?,?,?,?,?)`, [name, age || null, phone || null, birth_date || null, group_name || null, address || null, guardian_phone || null, facebook_link || null, khademId]);
   const created = await get('SELECT * FROM members WHERE id = ?', [Number(info.lastInsertRowid)]);
   res.json(created);
 }));
@@ -221,15 +237,25 @@ app.put('/api/members/:id', requireAuth, requireRole('admin', 'amin_khedma', 'kh
   if (role === 'khadem' && existing.group_name !== myGroup) {
     return res.status(403).json({ error: 'هذا المخدوم مش في مجموعتك' });
   }
-  const { name, age, phone, birth_date, group_name, address, guardian_phone, facebook_link, active } = req.body || {};
-  const newGroup = role === 'khadem' ? myGroup : (group_name ?? existing.group_name); // الخادم متسمحش ينقل المخدوم لمجموعة تانية
+  const { name, age, phone, birth_date, group_name, address, guardian_phone, facebook_link, active, assigned_khadem_id } = req.body || {};
+  const newGroup = role === 'khadem' ? myGroup : (group_name ?? existing.group_name);
+
+  let newKhadem = existing.assigned_khadem_id ?? null;
+  if (newGroup !== existing.group_name) newKhadem = null; // لو الفصل اتغيّر الخادم القديم مبقاش مناسب
+  if (assigned_khadem_id !== undefined) newKhadem = assigned_khadem_id ? Number(assigned_khadem_id) : null;
+  if (newKhadem) {
+    const ok = await get("SELECT id FROM users WHERE id = ? AND role = 'khadem' AND active = 1 AND group_name = ?", [newKhadem, newGroup]);
+    if (!ok) return res.status(400).json({ error: 'الخادم ده مش من نفس فصل المخدوم' });
+  }
+
   await run(`UPDATE members SET
       name = COALESCE(?,name), age = COALESCE(?,age), phone = COALESCE(?,phone),
       birth_date = COALESCE(?,birth_date), group_name = ?, address = COALESCE(?,address),
-      guardian_phone = COALESCE(?,guardian_phone), facebook_link = COALESCE(?,facebook_link), active = COALESCE(?,active)
+      guardian_phone = COALESCE(?,guardian_phone), facebook_link = COALESCE(?,facebook_link), active = COALESCE(?,active),
+      assigned_khadem_id = ?
     WHERE id = ?`,
     [name ?? null, age ?? null, phone ?? null, birth_date ?? null, newGroup, address ?? null,
-      guardian_phone ?? null, facebook_link ?? null, active === undefined ? null : (active ? 1 : 0), id]);
+      guardian_phone ?? null, facebook_link ?? null, active === undefined ? null : (active ? 1 : 0), newKhadem, id]);
   const updated = await get('SELECT * FROM members WHERE id = ?', [id]);
   res.json(updated);
 }));
@@ -420,21 +446,41 @@ app.get('/api/reports/birthdays', requireAuth, requireRole('admin', 'amin_khedma
 
 // ---------- تقرير أسبوعي تلقائي عبر تليجرام (كل جمعة) ----------
 function formatMembersReport(groupName, date, rows) {
-  const present = rows.filter(r => r.present === 1);
-  const absent = rows.filter(r => r.present === 0 || r.present === null);
-  let text = `📋 تقرير فصل ${groupName} - ${date}\n\n`;
-  text += `✅ الحاضرين (${present.length}):\n`;
-  text += present.length ? present.map(r => `- ${r.name}`).join('\n') : '(لا يوجد)';
-  text += `\n\n❌ الغائبين (${absent.length}):\n`;
-  text += absent.length
-    ? absent.map(r => `- ${r.name}` + (r.reason ? ` (السبب: ${r.reason})` : ' (بدون سبب)')).join('\n')
-    : '(لا يوجد)';
+  const byKhadem = new Map();
+  for (const r of rows) {
+    const key = r.khadem_id ? String(r.khadem_id) : 'none';
+    if (!byKhadem.has(key)) byKhadem.set(key, { name: r.khadem_name || 'بدون خادم محدد', rows: [] });
+    byKhadem.get(key).rows.push(r);
+  }
+  let text = `📋 تقرير فصل ${groupName} - ${date}`;
+  for (const g of byKhadem.values()) {
+    const present = g.rows.filter(r => r.present === 1);
+    const absent = g.rows.filter(r => r.present !== 1);
+    text += `\n\n👤 الخادم: ${g.name}`;
+    text += `\n✅ الحاضرين (${present.length}):\n`;
+    text += present.length ? present.map(r => `- ${r.name}`).join('\n') : '(لا يوجد)';
+    text += `\n❌ الغايبين (${absent.length}):\n`;
+    text += absent.length
+      ? absent.map(r => `- ${r.name}` + (r.reason ? ` (السبب: ${r.reason})` : ' (بدون سبب)')).join('\n')
+      : '(لا يوجد)';
+  }
   return text;
+}
+
+async function classRows(date, group) {
+  return all(`
+    SELECT m.name, a.present, a.reason, m.assigned_khadem_id AS khadem_id, u.name AS khadem_name
+    FROM members m
+    LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
+    LEFT JOIN users u ON u.id = m.assigned_khadem_id
+    WHERE m.group_name = ? AND m.active = 1
+    ORDER BY (u.name IS NULL), u.name, m.name`, [date, group]);
 }
 
 app.get('/api/cron/weekly-report', ah(async (req, res) => {
   const authHeader = req.headers.authorization || '';
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  const validAuth = authHeader === `Bearer ${process.env.CRON_SECRET}` || req.query.secret === process.env.CRON_SECRET;
+  if (process.env.CRON_SECRET && !validAuth) {
     return res.status(401).json({ error: 'غير مصرح' });
   }
 
@@ -443,12 +489,7 @@ app.get('/api/cron/weekly-report', ah(async (req, res) => {
 
   // تقرير كل فصل لخدامه
   for (const group of GROUPS) {
-    const rows = await all(`
-      SELECT m.name, a.present, a.reason
-      FROM members m LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
-      WHERE m.group_name = ? AND m.active = 1 ORDER BY m.name`, [date, group]);
-    const text = formatMembersReport(group, date, rows);
-
+    const text = formatMembersReport(group, date, await classRows(date, group));
     const khadamInGroup = await all("SELECT id, name, telegram_chat_id FROM users WHERE role='khadem' AND group_name = ? AND active = 1", [group]);
     for (const k of khadamInGroup) {
       if (k.telegram_chat_id) {
@@ -458,7 +499,7 @@ app.get('/api/cron/weekly-report', ah(async (req, res) => {
     }
   }
 
-  // تقرير حضور الخدام + تقرير الفصول الثلاثة لأمناء الخدمة
+  // تقرير حضور الخدام + تقرير كل فصل (رسالة لكل فصل) لأمناء الخدمة
   const servantsRows = await all(`
     SELECT u.name, sa.present, sa.reason
     FROM users u LEFT JOIN servant_attendance sa ON sa.khadem_id = u.id AND sa.date = ?
@@ -472,20 +513,13 @@ app.get('/api/cron/weekly-report', ah(async (req, res) => {
     ? absentServants.map(r => `- ${r.name}` + (r.reason ? ` (السبب: ${r.reason})` : ' (بدون سبب)')).join('\n')
     : '(لا يوجد)';
 
-  let classesText = `📊 تقرير الفصول الثلاثة - ${date}\n`;
-  for (const group of GROUPS) {
-    const rows = await all(`
-      SELECT m.name, a.present, a.reason
-      FROM members m LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
-      WHERE m.group_name = ? AND m.active = 1 ORDER BY m.name`, [date, group]);
-    classesText += '\n' + formatMembersReport(group, date, rows) + '\n';
-  }
-
   const aminUsers = await all("SELECT id, name, telegram_chat_id FROM users WHERE role='amin_khedma' AND active = 1");
   for (const a of aminUsers) {
     if (a.telegram_chat_id) {
       await sendTelegramMessage(a.telegram_chat_id, servantsText);
-      await sendTelegramMessage(a.telegram_chat_id, classesText);
+      for (const g of GROUPS) {
+        await sendTelegramMessage(a.telegram_chat_id, formatMembersReport(g, date, await classRows(date, g)));
+      }
       results.push({ to: a.name, type: 'amin_khedma', ok: true });
     }
   }
