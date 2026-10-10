@@ -583,12 +583,14 @@ app.get('/api/reports/day-details', requireAuth, ah(async (req, res) => {
   }
 
   if (role === 'khadem') group = myGroup; // الخادم يشوف فصله بس
-  let sql = `SELECT m.name || ' — ' || COALESCE(m.group_name, '') AS name, a.present, a.reason
-    FROM members m LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
+  let sql = `SELECT m.name, m.group_name, COALESCE(u.name, 'بدون خادم محدد') AS khadem_name, a.present, a.reason
+    FROM members m
+    LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
+    LEFT JOIN users u ON u.id = m.assigned_khadem_id
     WHERE m.active = 1`;
   const args = [date];
   if (group) { sql += ' AND m.group_name = ?'; args.push(group); }
-  sql += ' ORDER BY ' + ORDER.replace('%s', 'm.group_name') + ', m.name';
+  sql += ' ORDER BY ' + ORDER.replace('%s', 'm.group_name') + ', (u.name IS NULL), u.name, m.name';
   res.json(await all(sql, args));
 }));
 const PORT = process.env.PORT || 3000;
