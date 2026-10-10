@@ -103,15 +103,38 @@ async function loadAlerts() {
 }
 
 // ---------------- المخدومين ----------------
+let KHADAM_LIST = [];
+
+function khademOptions(group, selectedId) {
+  return '<option value="">بدون</option>' + KHADAM_LIST
+    .filter(k => k.group_name === group)
+    .map(k => `<option value="${k.id}" ${k.id === selectedId ? 'selected' : ''}>${k.name}</option>`).join('');
+}
+
+function refreshKhadamSelect() {
+  const group = ME.role === 'khadem' ? ME.group_name : document.getElementById('m_group').value;
+  const sel = document.getElementById('m_khadem');
+  sel.innerHTML = group
+    ? khademOptions(group, ME.role === 'khadem' ? ME.id : null)
+    : '<option value="">اختر الفصل أولاً</option>';
+}
+
+async function assignKhadem(memberId, khademId) {
+  try {
+    await api('/api/members/' + memberId, { method: 'PUT', body: JSON.stringify({ assigned_khadem_id: khademId ? +khademId : null }) });
+  } catch (e) { alert(e.message); renderMembers(); }
+}
+
 async function renderMembers() {
   const content = document.getElementById('content');
   content.innerHTML = '<div class="card">جارِ التحميل...</div>';
-  const members = await api('/api/members');
+  const [members, khadam] = await Promise.all([api('/api/members'), api('/api/group-khadam')]);
+  KHADAM_LIST = khadam;
   const isKhadem = ME.role === 'khadem';
 
   const groupField = isKhadem
     ? `<input value="${ME.group_name || ''}" disabled>`
-    : `<select id="m_group"><option value="">بدون</option>${GROUPS.map(g => `<option value="${g}">${g}</option>`).join('')}</select>`;
+    : `<select id="m_group" onchange="refreshKhadamSelect()"><option value="">بدون</option>${GROUPS.map(g => `<option value="${g}">${g}</option>`).join('')}</select>`;
 
   content.innerHTML = `
     <div class="card">
@@ -125,13 +148,14 @@ async function renderMembers() {
         <div><label>موبايل ولي الأمر</label><input id="m_guardian_phone"></div>
         <div><label>رابط فيسبوك</label><input id="m_facebook"></div>
         <div><label>المجموعة</label>${groupField}</div>
+        <div><label>الخادم المسؤول</label><select id="m_khadem"><option value="">اختر الفصل أولاً</option></select></div>
       </div>
       <div class="actions"><button class="btn" onclick="addMember()">إضافة</button></div>
     </div>
     <div class="card">
       <h3>قائمة المخدومين (${members.length})</h3>
-    <div class="table-wrap"><table>
-        <tr><th>الاسم</th><th>السن</th><th>الهاتف</th><th>تاريخ الميلاد</th><th>العنوان</th><th>موبايل ولي الأمر</th><th>فيسبوك</th><th>المجموعة</th><th></th></tr>
+      <div class="table-wrap"><table>
+        <tr><th>الاسم</th><th>السن</th><th>الهاتف</th><th>تاريخ الميلاد</th><th>العنوان</th><th>موبايل ولي الأمر</th><th>فيسبوك</th><th>المجموعة</th><th>الخادم المسؤول</th><th></th></tr>
         ${members.map(m => `
           <tr>
             <td>${m.name}</td><td>${m.age ?? '-'}</td><td>${m.phone ?? '-'}</td>
@@ -140,6 +164,7 @@ async function renderMembers() {
             <td>${m.guardian_phone ?? '-'}</td>
             <td>${m.facebook_link ? `<a href="${m.facebook_link}" target="_blank">رابط</a>` : '-'}</td>
             <td>${m.group_name ?? '-'}</td>
+            <td><select onchange="assignKhadem(${m.id}, this.value)">${khademOptions(m.group_name, m.assigned_khadem_id)}</select></td>
             <td class="row-actions">
               <button class="btn" onclick='editMember(${JSON.stringify(m)})'>تعديل</button>
               <button class="btn danger" onclick="deleteMember(${m.id})">حذف</button>
@@ -147,6 +172,7 @@ async function renderMembers() {
           </tr>`).join('')}
       </table></div>
     </div>`;
+  refreshKhadamSelect();
 }
 
 async function addMember() {
@@ -158,11 +184,14 @@ async function addMember() {
     address: document.getElementById('m_address').value.trim(),
     guardian_phone: document.getElementById('m_guardian_phone').value.trim(),
     facebook_link: document.getElementById('m_facebook').value.trim(),
-    group_name: ME.role === 'khadem' ? ME.group_name : (document.getElementById('m_group').value || null)
+    group_name: ME.role === 'khadem' ? ME.group_name : (document.getElementById('m_group').value || null),
+    assigned_khadem_id: +document.getElementById('m_khadem').value || null
   };
   if (!body.name) { alert('اكتب اسم المخدوم'); return; }
-  await api('/api/members', { method: 'POST', body: JSON.stringify(body) });
-  renderMembers();
+  try {
+    await api('/api/members', { method: 'POST', body: JSON.stringify(body) });
+    renderMembers();
+  } catch (e) { alert(e.message); }
 }
 
 function editMember(m) {
@@ -530,6 +559,17 @@ async function loadServantsReport() {
 }
 
 // ---------------- تفاصيل يوم في التقرير ----------------
+function dayListHtml(rows) {
+  const present = rows.filter(r => r.present === 1);
+  const absent = rows.filter(r => r.present !== 1);
+  return `
+    <b>✅ الحاضرين (${present.length}):</b>
+    <div>${present.map(r => `- ${r.name}`).join('<br>') || '(لا يوجد)'}</div>
+    <br>
+    <b>❌ الغائبين (${absent.length}):</b>
+    <div>${absent.map(r => `- ${r.name}` + (r.reason ? ` (السبب: ${r.reason})` : '')).join('<br>') || '(لا يوجد)'}</div>`;
+}
+
 async function showDayDetails(date) {
   const isServants = !!document.getElementById('srep_table');
   const group = isServants
@@ -538,16 +578,24 @@ async function showDayDetails(date) {
   const q = new URLSearchParams({ type: isServants ? 'servants' : 'members', date });
   if (group) q.set('group_name', group);
   const rows = await api('/api/reports/day-details?' + q.toString());
-  const present = rows.filter(r => r.present === 1);
-  const absent = rows.filter(r => r.present !== 1);
+
+  let body;
+  if (isServants) {
+    body = dayListHtml(rows);
+  } else {
+    const groups = new Map();
+    rows.forEach(r => {
+      const key = (r.group_name || '') + '|' + r.khadem_name;
+      if (!groups.has(key)) groups.set(key, { title: (r.group_name ? r.group_name + ' — ' : '') + 'الخادم: ' + r.khadem_name, rows: [] });
+      groups.get(key).rows.push(r);
+    });
+    body = [...groups.values()].map(g => `<div style="margin-bottom:14px;"><h4>👤 ${g.title}</h4>${dayListHtml(g.rows)}</div>`).join('') || '(لا بيانات)';
+  }
+
   const html = `
     <div class="card" id="day_details" style="margin-top:12px;background:#fbf7ec;">
       <h4>📅 تفاصيل يوم ${date}</h4>
-      <b>✅ الحاضرين (${present.length}):</b>
-      <div>${present.map(r => `- ${r.name}`).join('<br>') || '(لا يوجد)'}</div>
-      <br>
-      <b>❌ الغائبين (${absent.length}):</b>
-      <div>${absent.map(r => `- ${r.name}` + (r.reason ? ` (السبب: ${r.reason})` : '')).join('<br>') || '(لا يوجد)'}</div>
+      ${body}
     </div>`;
   const old = document.getElementById('day_details');
   if (old) old.remove();
