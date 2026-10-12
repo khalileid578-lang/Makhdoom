@@ -89,7 +89,7 @@ function showTab(id) {
 }
 
 async function loadAlerts() {
-  // شريط تنبيه الغياب متشال
+  // شريط تنبيه الغياب متشال (بقرار المستخدم). الدالة فاضية عشان باقي الأكواد اللي بتناديها ما تتأثرش.
 }
 
 // ---------------- المخدومين ----------------
@@ -113,6 +113,32 @@ async function assignKhadem(memberId, khademId) {
   try {
     await api('/api/members/' + memberId, { method: 'PUT', body: JSON.stringify({ assigned_khadem_id: khademId ? +khademId : null }) });
   } catch (e) { alert(e.message); renderMembers(); }
+}
+
+function memberRowsHtml(members) {
+  let lastKey = null;
+  return members.map(m => {
+    const key = (m.group_name || '') + '|' + (m.khadem_name || '');
+    let head = '';
+    if (key !== lastKey) {
+      lastKey = key;
+      head = `<tr><td colspan="10" style="background:rgba(175,138,83,.18);font-weight:bold;">${m.group_name || 'بدون فصل'} — 👤 الخادم: ${m.khadem_name || 'بدون خادم محدد'}</td></tr>`;
+    }
+    return head + `
+          <tr>
+            <td>${m.name}</td><td>${m.age ?? '-'}</td><td>${m.phone ?? '-'}</td>
+            <td>${m.birth_date ?? '-'}</td>
+            <td>${m.address ?? '-'}</td>
+            <td>${m.guardian_phone ?? '-'}</td>
+            <td>${m.facebook_link ? `<a href="${m.facebook_link}" target="_blank">رابط</a>` : '-'}</td>
+            <td>${m.group_name ?? '-'}</td>
+            <td><select onchange="assignKhadem(${m.id}, this.value)">${khademOptions(m.group_name, m.assigned_khadem_id)}</select></td>
+            <td class="row-actions">
+              <button class="btn" onclick='editMember(${JSON.stringify(m)})'>تعديل</button>
+              <button class="btn danger" onclick="deleteMember(${m.id})">حذف</button>
+            </td>
+          </tr>`;
+  }).join('');
 }
 
 async function renderMembers() {
@@ -146,20 +172,7 @@ async function renderMembers() {
       <h3>قائمة المخدومين (${members.length})</h3>
       <div class="table-wrap"><table>
         <tr><th>الاسم</th><th>السن</th><th>الهاتف</th><th>تاريخ الميلاد</th><th>العنوان</th><th>موبايل ولي الأمر</th><th>فيسبوك</th><th>المجموعة</th><th>الخادم المسؤول</th><th></th></tr>
-        ${members.map(m => `
-          <tr>
-            <td>${m.name}</td><td>${m.age ?? '-'}</td><td>${m.phone ?? '-'}</td>
-            <td>${m.birth_date ?? '-'}</td>
-            <td>${m.address ?? '-'}</td>
-            <td>${m.guardian_phone ?? '-'}</td>
-            <td>${m.facebook_link ? `<a href="${m.facebook_link}" target="_blank">رابط</a>` : '-'}</td>
-            <td>${m.group_name ?? '-'}</td>
-            <td><select onchange="assignKhadem(${m.id}, this.value)">${khademOptions(m.group_name, m.assigned_khadem_id)}</select></td>
-            <td class="row-actions">
-              <button class="btn" onclick='editMember(${JSON.stringify(m)})'>تعديل</button>
-              <button class="btn danger" onclick="deleteMember(${m.id})">حذف</button>
-            </td>
-          </tr>`).join('')}
+        ${memberRowsHtml(members)}
       </table></div>
     </div>`;
   refreshKhadamSelect();
@@ -222,7 +235,7 @@ async function renderAttendance(date) {
       <label>تاريخ الاجتماع</label>
       <input type="date" id="att_date" value="${date}" onchange="renderAttendance(this.value)">
     </div>
-<div class="card">
+    <div class="card">
       <div class="table-wrap"><table>
         <tr><th>الاسم</th><th>الحالة</th><th>تسجيل</th></tr>
         ${rows.map(r => `
@@ -252,7 +265,7 @@ function updateAttendanceRowUI(member_id, present, reason) {
 }
 
 async function markAttendance(member_id, date, present, reason) {
-  updateAttendanceRowUI(member_id, present, reason);
+  updateAttendanceRowUI(member_id, present, reason); // تحديث فوري من غير انتظار السيرفر
   try {
     await api('/api/attendance', { method: 'POST', body: JSON.stringify({ member_id, date, present, reason: reason || null }) });
     loadAlerts();
@@ -278,7 +291,7 @@ async function clearAttendance(member_id, date) {
     renderAttendance(date);
   }
 }
-    
+
 // ---------------- حضور الخدام ----------------
 async function renderServants(date) {
   date = date || today();
@@ -293,7 +306,7 @@ async function renderServants(date) {
     <div class="card">
       <div class="table-wrap"><table>
         <tr><th>الاسم</th><th>الحالة</th><th>تسجيل</th></tr>
-${rows.map(r => `
+        ${rows.map(r => `
           <tr>
             <td>${r.name}</td>
             <td id="srv-status-${r.khadem_id}">${attendanceStatusHTML(r.present, r.reason)}</td>
@@ -341,7 +354,7 @@ async function clearServant(khadem_id, date) {
     renderServants(date);
   }
 }
-        
+
 // ---------------- التقارير ----------------
 async function renderReports() {
   const content = document.getElementById('content');
@@ -466,6 +479,12 @@ function editUser(u) {
     .catch(e => alert(e.message));
 }
 
+async function resetTelegram(id) {
+  if (!confirm('تأكيد تصفير ربط تليجرام؟ هيظهر اللينك تاني عشان تبعته لربط جديد')) return;
+  await api('/api/users/' + id, { method: 'PUT', body: JSON.stringify({ reset_telegram: true }) });
+  renderUsers();
+}
+
 function resetPassword(id) {
   const newPassword = prompt('اكتب كلمة المرور الجديدة:');
   if (!newPassword) return;
@@ -474,11 +493,6 @@ function resetPassword(id) {
     .catch(e => alert(e.message));
 }
 
-async function resetTelegram(id) {
-  if (!confirm('تأكيد تصفير ربط تليجرام؟ هيظهر اللينك تاني عشان تبعته لربط جديد')) return;
-  await api('/api/users/' + id, { method: 'PUT', body: JSON.stringify({ reset_telegram: true }) });
-  renderUsers();
-}
 function toggleGroupField() {
   const role = document.getElementById('u_role').value;
   document.getElementById('u_group_wrap').style.display = role === 'khadem' ? 'block' : 'none';
@@ -592,4 +606,6 @@ async function showDayDetails(date) {
   document.getElementById(isServants ? 'srep_table' : 'rep_att_table').insertAdjacentHTML('afterend', html);
 }
 
+
 init();
+
