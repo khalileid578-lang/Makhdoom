@@ -89,17 +89,7 @@ function showTab(id) {
 }
 
 async function loadAlerts() {
-  try {
-    const data = await api('/api/alerts/latest');
-    const box = document.getElementById('alertBox');
-    if (!data.date) { box.innerHTML = ''; return; }
-    const parts = [];
-    if (data.absentMembers.length) parts.push(`غياب مخدومين: ${data.absentMembers.join('، ')}`);
-    if (data.absentServants.length) parts.push(`غياب خدام: ${data.absentServants.join('، ')}`);
-    box.innerHTML = parts.length
-      ? `<div class="alert">🔔 تنبيه غياب بتاريخ ${data.date}<br>${parts.join('<br>')}</div>`
-      : `<div class="alert ok">✅ لا يوجد غياب مسجل بتاريخ ${data.date}</div>`;
-  } catch (e) { /* تجاهل */ }
+  // شريط تنبيه الغياب متشال
 }
 
 // ---------------- المخدومين ----------------
