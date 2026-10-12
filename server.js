@@ -92,9 +92,10 @@ function withTelegramLink(u) {
 
 app.get('/api/users', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
   const myRole = req.session.user.role;
+    const userOrder = " ORDER BY CASE role WHEN 'admin' THEN 1 WHEN 'amin_khedma' THEN 2 ELSE 3 END, CASE group_name WHEN 'أولى إعدادي' THEN 1 WHEN 'تانية إعدادي' THEN 2 WHEN 'تالتة إعدادي' THEN 3 ELSE 4 END, name";
   const rows = myRole === 'admin'
-    ? await all('SELECT id, username, name, role, group_name, active, telegram_chat_id, telegram_code FROM users ORDER BY id')
-    : await all("SELECT id, username, name, role, group_name, active, telegram_chat_id, telegram_code FROM users WHERE role = 'khadem' ORDER BY id");
+    ? await all('SELECT id, username, name, role, group_name, active, telegram_chat_id, telegram_code FROM users' + userOrder)
+    : await all("SELECT id, username, name, role, group_name, active, telegram_chat_id, telegram_code FROM users WHERE role = 'khadem'" + userOrder);
   res.json(rows.map(withTelegramLink));
 }));
 
@@ -192,9 +193,10 @@ app.get('/api/members', requireAuth, ah(async (req, res) => {
   const { role, group_name } = req.session.user;
   const base = `SELECT m.*, u.name AS khadem_name FROM members m
     LEFT JOIN users u ON u.id = m.assigned_khadem_id WHERE m.active = 1`;
+    const order = " ORDER BY CASE m.group_name WHEN 'أولى إعدادي' THEN 1 WHEN 'تانية إعدادي' THEN 2 WHEN 'تالتة إعدادي' THEN 3 ELSE 4 END, (u.name IS NULL), u.name, m.name";
   const rows = role === 'khadem'
-    ? await all(base + ' AND m.group_name = ? ORDER BY m.name', [group_name])
-    : await all(base + ' ORDER BY m.name');
+    ? await all(base + ' AND m.group_name = ?' + order, [group_name])
+    : await all(base + order);
   res.json(rows);
 }));
 
@@ -348,7 +350,7 @@ app.get('/api/reports/servants-attendance', requireAuth, requireRole('admin', 'a
     WHERE sa.date BETWEEN COALESCE(?, '0000-01-01') AND COALESCE(?, '9999-12-31')`;
   const args = [from || null, to || null];
   if (group_name) { sql += ' AND u.group_name = ?'; args.push(group_name); }
-  sql += ' GROUP BY sa.date ORDER BY sa.date';
+    sql += ' GROUP BY sa.date ORDER BY sa.date DESC';
   const rows = await all(sql, args);
   res.json(rows.map(r => ({
     date: r.date,
@@ -425,7 +427,7 @@ app.get('/api/reports/attendance', requireAuth, ah(async (req, res) => {
     WHERE a.date BETWEEN COALESCE(?, '0000-01-01') AND COALESCE(?, '9999-12-31')`;
   const args = [from || null, to || null];
   if (group) { sql += ' AND m.group_name = ?'; args.push(group); }
-  sql += ' GROUP BY a.date ORDER BY a.date';
+    sql += ' GROUP BY a.date ORDER BY a.date DESC';
 
   const rows = await all(sql, args);
   res.json(rows.map(r => ({
@@ -544,7 +546,7 @@ app.get('/api/export', requireAuth, ah(async (req, res) => {
   const rows = [headers];
 
   if (role !== 'khadem') {
-    const khadam = await all("SELECT name, username, group_name, telegram_chat_id FROM users WHERE role='khadem' AND active=1 ORDER BY group_name, name");
+        const khadam = await all("SELECT name, username, group_name, telegram_chat_id FROM users WHERE role='khadem' AND active=1 ORDER BY CASE group_name WHEN 'أولى إعدادي' THEN 1 WHEN 'تانية إعدادي' THEN 2 WHEN 'تالتة إعدادي' THEN 3 ELSE 4 END, name");
     khadam.forEach(k => rows.push(['خادم', k.name, k.group_name || '', '', '', '', '', '', '', k.username, k.telegram_chat_id ? 'مربوط' : 'غير مربوط']));
 
     const amins = await all("SELECT name, username, telegram_chat_id FROM users WHERE role='amin_khedma' AND active=1 ORDER BY name");
