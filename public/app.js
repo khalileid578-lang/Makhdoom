@@ -197,11 +197,25 @@ async function addMember() {
   } catch (e) { alert(e.message); }
 }
 
+// يحوّل تاريخ الميلاد لصيغة 2012-05-30. بيقبل 2012-05-30 أو 30/5/2012 وبيقبل الأرقام العربي
+function normalizeBirthDate(v) {
+  v = (v || '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).trim();
+  if (!v) return null; // فاضي = سيب القديم
+  let m = v.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = v.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  return undefined; // صيغة غلط
+}
+
 function editMember(m) {
   const name = prompt('الاسم:', m.name);
   if (name === null) return;
   const age = prompt('السن:', m.age ?? '');
   const phone = prompt('رقم الهاتف:', m.phone ?? '');
+  const birthRaw = prompt('تاريخ الميلاد (مثال: 2012-05-30 أو 30/5/2012):', m.birth_date ?? '');
+  const birth_date = normalizeBirthDate(birthRaw);
+  if (birth_date === undefined) { alert('صيغة تاريخ الميلاد غلط، اكتبه زي: 2012-05-30'); return; }
   const address = prompt('العنوان:', m.address ?? '');
   const guardian_phone = prompt('موبايل ولي الأمر:', m.guardian_phone ?? '');
   const facebook_link = prompt('رابط فيسبوك:', m.facebook_link ?? '');
@@ -210,7 +224,7 @@ function editMember(m) {
     const idx = prompt('المجموعة (اكتب رقم):\n' + GROUPS.map((g, i) => `${i + 1}) ${g}`).join('\n'), GROUPS.indexOf(m.group_name) + 1);
     if (idx && GROUPS[+idx - 1]) group_name = GROUPS[+idx - 1];
   }
-  updateMember(m.id, { name, age: +age || null, phone, address, guardian_phone, facebook_link, group_name });
+  updateMember(m.id, { name, age: +age || null, phone, birth_date, address, guardian_phone, facebook_link, group_name });
 }
 
 async function updateMember(id, body) {
