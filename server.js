@@ -410,4 +410,255 @@ app.post('/api/servant-attendance', requireAuth, requireRole('admin', 'amin_khed
   const { khadem_id, date, present, reason } = req.body || {};
   if (!khadem_id || !date || present === undefined) return res.status(400).json({ error: 'بيانات ناقصة' });
   await run(`INSERT INTO servant_attendance (khadem_id, date, present, reason, recorded_by) VALUES (?,?,?,?,?)
-    ON CONFLICT(k
+    ON CONFLICT(khadem_id, date) DO UPDATE SET present = excluded.present, reason = excluded.reason, recorded_by = excluded.recorded_by`,
+    [khadem_id, date, present ? 1 : 0, present ? null : (reason || null), req.session.user.id]);
+  res.json({ ok: true });
+}));
+
+// إلغاء تسجيل حضور يوم معين لخادم معين (مش بيمسح الخادم، بيمسح بس علامة اليوم ده)
+app.delete('/api/servant-attendance', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
+  const { khadem_id, date } = req.body || {};
+  if (!khadem_id || !date) return res.status(400).json({ error: 'بيانات ناقصة' });
+  await run('DELETE FROM servant_attendance WHERE khadem_id = ? AND date = ?', [khadem_id, date]);
+  res.json({ ok: true });
+}));
+
+// ---------- Alerts (تنبيه غياب) ----------
+app.get('/api/alerts/latest', requireAuth, ah(async (req, res) => {
+  const lastDateRow = await get('SELECT MAX(date) d FROM attendance');
+  const lastDate = lastDateRow && lastDateRow.d;
+  if (!lastDate) return res.json({ date: null, absentMembers: [], absentServants: [] });
+
+  const { role, group_name } = req.session.user;
+  // أي مخدوم/خادم معملوش له حضور أو غياب في اليوم ده يتحسب غايب تلقائي (present IS NULL)
+  let absentMembers;
+  if (role === 'khadem') {
+    absentMembers = await all(`
+      SELECT m.name FROM members m LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
+      WHERE m.active = 1 AND m.group_name = ? AND (a.present IS NULL OR a.present = 0)`, [lastDate, group_name]);
+  } else {
+    absentMembers = await all(`
+      SELECT m.name FROM members m LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
+      WHERE m.active = 1 AND (a.present IS NULL OR a.present = 0)`, [lastDate]);
+  }
+  let absentServants = [];
+  if (role === 'admin' || role === 'amin_khedma') {
+    absentServants = await all(`
+      SELECT u.name FROM users u LEFT JOIN servant_attendance sa ON sa.khadem_id = u.id AND sa.date = ?
+      WHERE u.role = 'khadem' AND u.active = 1 AND (sa.present IS NULL OR sa.present = 0)`, [lastDate]);
+  }
+  res.json({
+    date: lastDate,
+    absentMembers: absentMembers.map(r => r.name),
+    absentServants: absentServants.map(r => r.name)
+  });
+}));
+
+// ---------- Reports ----------
+// أدمن وأمين خدمة: أي فصل (أو الكل). خادم: فصله بس تلقائيًا
+app.get('/api/reports/attendance', requireAuth, ah(async (req, res) => {
+  const { from, to } = req.query;
+  const { role, group_name } = req.session.user;
+  let group = req.query.group_name || null;
+  if (role === 'khadem') group = group_name; // الخادم يشوف فصله بس مهما بعت
+
+  // إجمالي عدد المخدومين النشطين في النطاق المطلوب، عشان نحسب غياب أي حد معملوش حضور تلقائي
+  let totalSql = 'SELECT COUNT(*) c FROM members WHERE active = 1';
+  const totalArgs = [];
+  if (group) { totalSql += ' AND group_name = ?'; totalArgs.push(group); }
+  const totalRow = await get(totalSql, totalArgs);
+  const totalMembers = Number(totalRow.c);
+
+  let sql = `
+    SELECT a.date, SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) as present_count
+    FROM attendance a JOIN members m ON m.id = a.member_id
+    WHERE a.date BETWEEN COALESCE(?, '0000-01-01') AND COALESCE(?, '9999-12-31')`;
+  const args = [from || null, to || null];
+  if (group) { sql += ' AND m.group_name = ?'; args.push(group); }
+  sql += ' GROUP BY a.date ORDER BY a.date DESC';
+
+  const rows = await all(sql, args);
+  res.json(rows.map(r => ({
+    date: r.date,
+    present_count: Number(r.present_count),
+    absent_count: Math.max(totalMembers - Number(r.present_count), 0)
+  })));
+}));
+
+app.get('/api/reports/birthdays', requireAuth, requireRole('admin', 'amin_khedma'), ah(async (req, res) => {
+  const month = (req.query.month || String(new Date().getMonth() + 1).padStart(2, '0')).padStart(2, '0');
+  const rows = await all(`
+    SELECT name, birth_date, group_name FROM members
+    WHERE active = 1 AND birth_date IS NOT NULL AND strftime('%m', birth_date) = ?
+    ORDER BY strftime('%d', birth_date)`, [month]);
+  res.json(rows);
+}));
+
+// ---------- تقرير أسبوعي تلقائي عبر تليجرام (كل جمعة) ----------
+function formatMembersReport(groupName, date, rows) {
+  const byKhadem = new Map();
+  for (const r of rows) {
+    const key = r.khadem_id ? String(r.khadem_id) : 'none';
+    if (!byKhadem.has(key)) byKhadem.set(key, { name: r.khadem_name || 'بدون خادم محدد', rows: [] });
+    byKhadem.get(key).rows.push(r);
+  }
+  let text = `📋 تقرير فصل ${groupName} - ${date}`;
+  for (const g of byKhadem.values()) {
+    const present = g.rows.filter(r => r.present === 1);
+    const absent = g.rows.filter(r => r.present !== 1);
+    text += `\n\n👤 الخادم: ${g.name}`;
+    text += `\n✅ الحاضرين (${present.length}):\n`;
+    text += present.length ? present.map(r => `- ${r.name}`).join('\n') : '(لا يوجد)';
+    text += `\n❌ الغايبين (${absent.length}):\n`;
+    text += absent.length
+      ? absent.map(r => `- ${r.name}` + (r.reason ? ` (السبب: ${r.reason})` : ' (بدون سبب)')).join('\n')
+      : '(لا يوجد)';
+  }
+  return text;
+}
+
+async function classRows(date, group) {
+  return all(`
+    SELECT m.name, a.present, a.reason, m.assigned_khadem_id AS khadem_id, u.name AS khadem_name
+    FROM members m
+    LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
+    LEFT JOIN users u ON u.id = m.assigned_khadem_id
+    WHERE m.group_name = ? AND m.active = 1
+    ORDER BY (u.name IS NULL), u.name, m.name`, [date, group]);
+}
+
+app.get('/api/cron/weekly-report', ah(async (req, res) => {
+  const authHeader = req.headers.authorization || '';
+  const validAuth = authHeader === `Bearer ${process.env.CRON_SECRET}` || req.query.secret === process.env.CRON_SECRET;
+  if (process.env.CRON_SECRET && !validAuth) {
+    return res.status(401).json({ error: 'غير مصرح' });
+  }
+
+  const date = new Date().toISOString().slice(0, 10);
+  const results = [];
+
+  // تقرير كل فصل لخدامه
+  for (const group of GROUPS) {
+    const text = formatMembersReport(group, date, await classRows(date, group));
+    const khadamInGroup = await all("SELECT id, name, telegram_chat_id FROM users WHERE role='khadem' AND group_name = ? AND active = 1", [group]);
+    for (const k of khadamInGroup) {
+      if (k.telegram_chat_id) {
+        await sendTelegramMessage(k.telegram_chat_id, text);
+        results.push({ to: k.name, group, ok: true });
+      }
+    }
+  }
+
+  // تقرير حضور الخدام + تقرير كل فصل (رسالة لكل فصل) لأمناء الخدمة
+  const servantsRows = await all(`
+    SELECT u.name, sa.present, sa.reason
+    FROM users u LEFT JOIN servant_attendance sa ON sa.khadem_id = u.id AND sa.date = ?
+    WHERE u.role = 'khadem' AND u.active = 1 ORDER BY u.name`, [date]);
+  const presentServants = servantsRows.filter(r => r.present === 1);
+  const absentServants = servantsRows.filter(r => r.present === 0 || r.present === null);
+  let servantsText = `👨‍🏫 تقرير حضور الخدام - ${date}\n\n✅ حاضرين (${presentServants.length}):\n`;
+  servantsText += presentServants.length ? presentServants.map(r => `- ${r.name}`).join('\n') : '(لا يوجد)';
+  servantsText += `\n\n❌ غائبين (${absentServants.length}):\n`;
+  servantsText += absentServants.length
+    ? absentServants.map(r => `- ${r.name}` + (r.reason ? ` (السبب: ${r.reason})` : ' (بدون سبب)')).join('\n')
+    : '(لا يوجد)';
+
+  const aminUsers = await all("SELECT id, name, telegram_chat_id FROM users WHERE role='amin_khedma' AND active = 1");
+  for (const a of aminUsers) {
+    if (a.telegram_chat_id) {
+      await sendTelegramMessage(a.telegram_chat_id, servantsText);
+      for (const g of GROUPS) {
+        await sendTelegramMessage(a.telegram_chat_id, formatMembersReport(g, date, await classRows(date, g)));
+      }
+      results.push({ to: a.name, type: 'amin_khedma', ok: true });
+    }
+  }
+
+  res.json({ ok: true, date, sent: results.length, results });
+}));
+
+// ---------- نسخة احتياطية قابلة للتنزيل (شيت CSV يتفتح في Excel) ----------
+function csvEscape(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+app.get('/api/export', requireAuth, ah(async (req, res) => {
+  const { role, group_name } = req.session.user;
+  const today = new Date().toISOString().slice(0, 10);
+  const groupsToShow = role === 'khadem' ? [group_name] : GROUPS;
+  const countText = (meetings) => `${meetings.filter(x => x.present).length} من ${meetings.length}`;
+
+  const headers = ['النوع', 'الاسم', 'المجموعة', 'السن', 'الهاتف', 'تاريخ الميلاد', 'العنوان', 'موبايل ولي الأمر', 'رابط فيسبوك', 'اسم المستخدم', 'حالة تليجرام', 'حضور الاجتماعات'];
+  const rows = [headers];
+
+  if (role !== 'khadem') {
+    const khadam = await all("SELECT id, name, username, group_name, telegram_chat_id FROM users WHERE role='khadem' AND active=1 ORDER BY CASE group_name WHEN 'أولى إعدادي' THEN 1 WHEN 'تانية إعدادي' THEN 2 WHEN 'تالتة إعدادي' THEN 3 ELSE 4 END, name");
+    const sDates = (await all('SELECT DISTINCT date FROM servant_attendance')).map(r => r.date);
+    const sRecs = groupRecords(await all('SELECT khadem_id, date, present, reason FROM servant_attendance'), 'khadem_id');
+    khadam.forEach(k => {
+      const meetings = buildMeetings(sDates, sRecs.get(Number(k.id)));
+      rows.push(['خادم', k.name, k.group_name || '', '', '', '', '', '', '', k.username, k.telegram_chat_id ? 'مربوط' : 'غير مربوط', countText(meetings)]);
+    });
+
+    const amins = await all("SELECT name, username, telegram_chat_id FROM users WHERE role='amin_khedma' AND active=1 ORDER BY name");
+    amins.forEach(a => rows.push(['أمين خدمة', a.name, '', '', '', '', '', '', '', a.username, a.telegram_chat_id ? 'مربوط' : 'غير مربوط', '']));
+  }
+
+  for (const g of groupsToShow) {
+    const members = await all('SELECT * FROM members WHERE group_name = ? AND active = 1 ORDER BY name', [g]);
+    const dates = (await all('SELECT DISTINCT a.date FROM attendance a JOIN members x ON x.id = a.member_id WHERE x.group_name = ?', [g])).map(r => r.date);
+    const recs = groupRecords(await all('SELECT a.member_id, a.date, a.present, a.reason FROM attendance a JOIN members x ON x.id = a.member_id WHERE x.group_name = ?', [g]), 'member_id');
+    members.forEach(m => {
+      const meetings = buildMeetings(dates, recs.get(Number(m.id)));
+      rows.push(['مخدوم', m.name, m.group_name || '', m.age ?? '', m.phone ?? '', m.birth_date ?? '', m.address ?? '', m.guardian_phone ?? '', m.facebook_link ?? '', '', '', countText(meetings)]);
+    });
+  }
+
+  const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
+  const content = '\uFEFF' + csv; // BOM عشان Excel يقرأ العربي صح
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="backup-${today}.csv"`);
+  res.send(content);
+}));
+
+// تفاصيل يوم معين في التقرير (أسماء الحاضرين والغايبين + سبب الغياب)
+app.get('/api/reports/day-details', requireAuth, ah(async (req, res) => {
+  const { type, date } = req.query;
+  if (!date) return res.status(400).json({ error: 'حدد التاريخ' });
+  const { role, group_name: myGroup } = req.session.user;
+  let group = req.query.group_name || null;
+  const ORDER = "CASE %s WHEN 'أولى إعدادي' THEN 1 WHEN 'تانية إعدادي' THEN 2 WHEN 'تالتة إعدادي' THEN 3 ELSE 4 END";
+
+  // LEFT JOIN من جدول الأشخاص نفسه، عشان أي حد معملوش حضور ولا غياب يظهر "غايب" تلقائي
+  if (type === 'servants') {
+    if (role !== 'admin' && role !== 'amin_khedma') return res.status(403).json({ error: 'لا تملك صلاحية لهذا الإجراء' });
+    let sql = `SELECT u.name || ' — ' || COALESCE(u.group_name, '') AS name, sa.present, sa.reason
+      FROM users u LEFT JOIN servant_attendance sa ON sa.khadem_id = u.id AND sa.date = ?
+      WHERE u.role = 'khadem' AND u.active = 1`;
+    const args = [date];
+    if (group) { sql += ' AND u.group_name = ?'; args.push(group); }
+    sql += ' ORDER BY ' + ORDER.replace('%s', 'u.group_name') + ', u.name';
+    return res.json(await all(sql, args));
+  }
+
+  if (role === 'khadem') group = myGroup; // الخادم يشوف فصله بس
+  let sql = `SELECT m.name, m.group_name, COALESCE(u.name, 'بدون خادم محدد') AS khadem_name, a.present, a.reason
+    FROM members m
+    LEFT JOIN attendance a ON a.member_id = m.id AND a.date = ?
+    LEFT JOIN users u ON u.id = m.assigned_khadem_id
+    WHERE m.active = 1`;
+  const args = [date];
+  if (group) { sql += ' AND m.group_name = ?'; args.push(group); }
+  sql += ' ORDER BY ' + ORDER.replace('%s', 'm.group_name') + ', (u.name IS NULL), u.name, m.name';
+  res.json(await all(sql, args));
+}));
+
+const PORT = process.env.PORT || 3000;
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`السيرفر شغال على المنفذ ${PORT}`));
+}
+module.exports = app;
+
