@@ -456,4 +456,200 @@ async function loadAttendanceReport() {
 async function loadBirthdays() {
   const month = document.getElementById('rep_month').value;
   const rows = await api('/api/reports/birthdays?month=' + month);
-  document.getElementById('rep_bday_table'
+  document.getElementById('rep_bday_table').innerHTML = `
+    <div class="table-wrap"><table>
+      <tr><th>الاسم</th><th>تاريخ الميلاد</th><th>المجموعة</th></tr>
+      ${rows.map(r => `<tr><td>${r.name}</td><td>${r.birth_date}</td><td>${r.group_name ?? '-'}</td></tr>`).join('') || '<tr><td colspan="3">لا أعياد ميلاد هذا الشهر</td></tr>'}
+    </table></div>`;
+}
+
+// ---------------- المستخدمين (أدمن + أمين خدمة) ----------------
+async function renderUsers() {
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="card">جارِ التحميل...</div>';
+  const users = await api('/api/users');
+  const isAdmin = ME.role === 'admin';
+
+  const roleOptions = isAdmin
+    ? `<option value="khadem">خادم</option><option value="amin_khedma">أمين خدمة</option><option value="admin">أدمن</option>`
+    : `<option value="khadem">خادم</option>`;
+
+  content.innerHTML = `
+    <div class="card">
+      <h3>إضافة مستخدم جديد</h3>
+      <div class="grid">
+        <div><label>الاسم</label><input id="u_name"></div>
+        <div><label>اسم المستخدم</label><input id="u_username"></div>
+        <div><label>كلمة المرور</label><input id="u_password" type="password"></div>
+        <div><label>الصلاحية</label>
+          <select id="u_role" onchange="toggleGroupField()">${roleOptions}</select>
+        </div>
+        <div id="u_group_wrap"><label>المجموعة (للخادم فقط)</label>
+          <select id="u_group"><option value="">اختر المجموعة</option>${GROUPS.map(g => `<option value="${g}">${g}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div class="actions"><button class="btn" onclick="addUser()">إضافة</button></div>
+    </div>
+    <div class="card">
+      <h3>المستخدمون</h3>
+      <div class="table-wrap"><table>
+        <tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th>المجموعة</th><th>تليجرام</th><th>مفعّل</th><th></th></tr>
+        ${users.map(u => `
+          <tr>
+            <td>${u.name}</td><td>${u.username}</td><td>${ROLE_LABEL[u.role]}</td><td>${u.group_name ?? '-'}</td>
+            <td>${u.telegram_linked ? `✅ مربوط <button class="btn secondary" onclick="resetTelegram(${u.id})">🔄 تغيير</button>` : (u.telegram_link ? `<a href="${u.telegram_link}" target="_blank">لينك الربط</a>` : '-')}</td>
+            <td>${u.active ? 'نعم' : 'لا'}</td>
+            <td class="row-actions">
+              <button class="btn" onclick='editUser(${JSON.stringify({ id: u.id, name: u.name, group_name: u.group_name, role: u.role })})'>تعديل</button>
+              <button class="btn" onclick="resetPassword(${u.id})">🔑 كلمة</button>
+              <button class="btn" onclick="toggleUser(${u.id}, ${u.active ? 0 : 1})">${u.active ? 'تعطيل' : 'تفعيل'}</button>
+              <button class="btn danger" onclick="deleteUser(${u.id})">حذف</button>
+            </td>
+          </tr>`).join('')}
+      </table></div>
+    </div>`;
+}
+
+function editUser(u) {
+  const name = prompt('الاسم:', u.name);
+  if (name === null) return;
+  let group_name = u.group_name;
+  if (u.role === 'khadem') {
+    const idx = prompt('المجموعة (اكتب رقم):\n' + GROUPS.map((g, i) => `${i + 1}) ${g}`).join('\n'), GROUPS.indexOf(u.group_name) + 1);
+    if (idx && GROUPS[+idx - 1]) group_name = GROUPS[+idx - 1];
+  }
+  api('/api/users/' + u.id, { method: 'PUT', body: JSON.stringify({ name, group_name }) })
+    .then(renderUsers)
+    .catch(e => alert(e.message));
+}
+
+async function resetTelegram(id) {
+  if (!confirm('تأكيد تصفير ربط تليجرام؟ هيظهر اللينك تاني عشان تبعته لربط جديد')) return;
+  await api('/api/users/' + id, { method: 'PUT', body: JSON.stringify({ reset_telegram: true }) });
+  renderUsers();
+}
+
+function resetPassword(id) {
+  const newPassword = prompt('اكتب كلمة المرور الجديدة:');
+  if (!newPassword) return;
+  api('/api/users/' + id, { method: 'PUT', body: JSON.stringify({ password: newPassword }) })
+    .then(() => alert('تم تغيير كلمة المرور بنجاح ✅'))
+    .catch(e => alert(e.message));
+}
+
+function toggleGroupField() {
+  const role = document.getElementById('u_role').value;
+  document.getElementById('u_group_wrap').style.display = role === 'khadem' ? 'block' : 'none';
+}
+
+async function addUser() {
+  const role = document.getElementById('u_role').value;
+  const body = {
+    name: document.getElementById('u_name').value.trim(),
+    username: document.getElementById('u_username').value.trim(),
+    password: document.getElementById('u_password').value,
+    role,
+    group_name: role === 'khadem' ? document.getElementById('u_group').value : null
+  };
+  if (!body.name || !body.username || !body.password) { alert('أكمل كل الحقول'); return; }
+  if (role === 'khadem' && !body.group_name) { alert('اختر مجموعة (فصل) للخادم'); return; }
+  try {
+    await api('/api/users', { method: 'POST', body: JSON.stringify(body) });
+    renderUsers();
+  } catch (e) { alert(e.message); }
+}
+
+async function toggleUser(id, active) {
+  await api('/api/users/' + id, { method: 'PUT', body: JSON.stringify({ active }) });
+  renderUsers();
+}
+async function deleteUser(id) {
+  if (!confirm('تأكيد حذف المستخدم؟')) return;
+  await api('/api/users/' + id, { method: 'DELETE' });
+  renderUsers();
+}
+
+// ---------------- تقارير الخدام ----------------
+async function renderServantsReport() {
+  const content = document.getElementById('content');
+  content.innerHTML = `
+    <div class="card">
+      <h3>📋 تقرير حضور وغياب الخدام</h3>
+      <label>الفصل</label>
+      <select id="srep_group" onchange="loadServantsReport()">
+        <option value="">كل الفصول</option>
+        ${GROUPS.map(g => `<option value="${g}">${g}</option>`).join('')}
+      </select>
+      <div class="grid" style="margin-top:10px;">
+        <div><label>من تاريخ</label><input type="date" id="srep_from"></div>
+        <div><label>إلى تاريخ</label><input type="date" id="srep_to"></div>
+      </div>
+      <div class="actions"><button class="btn" onclick="loadServantsReport()">عرض</button></div>
+      <div id="srep_table" style="margin-top:12px;"></div>
+    </div>`;
+  loadServantsReport();
+}
+
+async function loadServantsReport() {
+  const q = new URLSearchParams();
+  const from = document.getElementById('srep_from').value;
+  const to = document.getElementById('srep_to').value;
+  const group = document.getElementById('srep_group').value;
+  if (from) q.set('from', from);
+  if (to) q.set('to', to);
+  if (group) q.set('group_name', group);
+  const rows = await api('/api/reports/servants-attendance?' + q.toString());
+  document.getElementById('srep_table').innerHTML = `
+    <div class="table-wrap"><table>
+      <tr><th>التاريخ</th><th>حاضر</th><th>غائب</th></tr>
+      ${rows.map(r => `<tr><td><a href="#" onclick="showDayDetails('${r.date}'); return false;">${r.date} 🔍</a></td><td>${r.present_count}</td><td>${r.absent_count}</td></tr>`).join('') || '<tr><td colspan="3">لا بيانات</td></tr>'}
+    </table></div>`;
+}
+
+// ---------------- تفاصيل يوم في التقرير ----------------
+function dayListHtml(rows) {
+  const present = rows.filter(r => r.present === 1);
+  const absent = rows.filter(r => r.present !== 1);
+  return `
+    <b>✅ الحاضرين (${present.length}):</b>
+    <div>${present.map(r => `- ${r.name}`).join('<br>') || '(لا يوجد)'}</div>
+    <br>
+    <b>❌ الغائبين (${absent.length}):</b>
+    <div>${absent.map(r => `- ${r.name}` + (r.reason ? ` (السبب: ${r.reason})` : '')).join('<br>') || '(لا يوجد)'}</div>`;
+}
+
+async function showDayDetails(date) {
+  const isServants = !!document.getElementById('srep_table');
+  const group = isServants
+    ? (document.getElementById('srep_group')?.value || '')
+    : (ME.role === 'khadem' ? '' : (document.getElementById('rep_group')?.value || ''));
+  const q = new URLSearchParams({ type: isServants ? 'servants' : 'members', date });
+  if (group) q.set('group_name', group);
+  const rows = await api('/api/reports/day-details?' + q.toString());
+
+  let body;
+  if (isServants) {
+    body = dayListHtml(rows);
+  } else {
+    const groups = new Map();
+    rows.forEach(r => {
+      const key = (r.group_name || '') + '|' + r.khadem_name;
+      if (!groups.has(key)) groups.set(key, { title: (r.group_name ? r.group_name + ' — ' : '') + 'الخادم: ' + r.khadem_name, rows: [] });
+      groups.get(key).rows.push(r);
+    });
+    body = [...groups.values()].map(g => `<div style="margin-bottom:14px;"><h4>👤 ${g.title}</h4>${dayListHtml(g.rows)}</div>`).join('') || '(لا بيانات)';
+  }
+
+  const html = `
+    <div class="card" id="day_details" style="margin-top:12px;background:#fbf7ec;">
+      <h4>📅 تفاصيل يوم ${date}</h4>
+      ${body}
+    </div>`;
+  const old = document.getElementById('day_details');
+  if (old) old.remove();
+  document.getElementById(isServants ? 'srep_table' : 'rep_att_table').insertAdjacentHTML('afterend', html);
+}
+
+
+init();
+
